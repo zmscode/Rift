@@ -2,15 +2,14 @@ import CoreGraphics
 import Foundation
 
 extension RiftLayout {
-	/// How many panes line up along `axis` (used to share space evenly).
+	/// How many slots this subtree takes along `axis` when sharing space evenly: a split on the same
+	/// axis adds up its children; a pane, or a split across the axis, counts as one.
 	public func weight(along axis: RiftAxis) -> Int {
 		switch self {
-		case .pane:
+		case .split(let split) where split.axis == axis:
+			return split.first.weight(along: axis) + split.second.weight(along: axis)
+		default:
 			return 1
-		case .split(let split):
-			let a = split.first.weight(along: axis)
-			let b = split.second.weight(along: axis)
-			return split.axis == axis ? a + b : max(a, b)
 		}
 	}
 

@@ -80,6 +80,20 @@ import Testing
 	}
 }
 
+@Suite struct MoveTests {
+	@Test func edgeMoveReusesTheCollapsedSplit() {
+		let l: Layout = .split(
+			RiftSplit(
+				axis: .horizontal, position: 0.3, first: .pane("a"),
+				second: .split(RiftSplit(axis: .vertical, first: .pane("b"), second: .pane("c")))))
+		let collapsed = l.splitIDs[1]
+		let moved = l.moving("c", to: "a", zone: .bottom)!
+		#expect(moved.split(withID: collapsed)?.position == 0.5)
+		#expect(moved.split(withID: collapsed)?.axis == .vertical)
+		#expect(l.moving("a", to: "a", zone: .left) == nil)
+	}
+}
+
 @Suite struct MotionTests {
 	@Test func snappyIsCriticallyDamped() {
 		guard case .spring(let spring) = RiftMotionCurve.snappy.shape else {
@@ -127,6 +141,12 @@ import Testing
 		#expect(pop.fadeIn == RiftMotionTiming(duration: 0.173, curve: .fade))
 		#expect(pop.fadeOut == RiftMotionTiming(duration: 0.146, curve: .fade))
 		#expect(RiftPanePopIn.standard(entryCurve: .standard, timeScale: 2).entry.duration == 1.08)
+	}
+
+	@Test func borderTimings() {
+		#expect(abs(RiftMotionCurve.snappy.borderGlideDuration - RiftMotionCurve.snappy.settlingDuration! / 2) < 1e-12)
+		#expect(RiftMotionCurve.standard.borderGlideDuration == 0.27)
+		#expect(RiftMotionTiming.borderCrossfade() == RiftMotionTiming(duration: 0.539, curve: .bezier(0.23, 1, 0.32, 1)))
 	}
 
 	@Test func styles() {

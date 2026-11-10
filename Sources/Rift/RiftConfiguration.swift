@@ -79,13 +79,18 @@ public struct RiftConfiguration {
 	/// `nil` uses the system accent color.
 	public var focusBorderColor: NSColor?
 	public var focusBorderWidth: CGFloat = 2
+	/// How the focus border gets from one pane to the next.
+	public var focusBorderTransition: RiftFocusBorderTransition = .glide
+	/// Multiplies the focus border's opacity while the window isn't key.
+	public var inactiveWindowFocusBorderOpacity: CGFloat = 0.35
 	/// Alpha applied to the content of panes that don't have focus (1 = no fading).
 	public var inactivePaneAlpha: CGFloat = 0.7
 	public var focusFollowsMouse = false
 
 	// Pane drag and drop
 	public var allowsPaneDragging = true
-	/// Allow dropping on the middle of a pane in the same view to swap the two panes.
+	/// Allow dropping on the middle of a pane in the same view to swap the two panes. When off, and
+	/// always for panes dragged from another view, the middle of a pane is not a drop target.
 	public var allowsCenterDrop = true
 	/// Preferred width of the edge bands that split a pane on drop.
 	public var dropBand: CGFloat = 80
@@ -127,4 +132,15 @@ public struct RiftStructuralActivity: OptionSet, Sendable, Hashable {
 	public static let windowLiveResize = RiftStructuralActivity(rawValue: 1 << 2)
 	/// A pane is being dragged.
 	public static let paneDrag = RiftStructuralActivity(rawValue: 1 << 3)
+}
+
+/// How the focus border moves when focus changes.
+public enum RiftFocusBorderTransition: String, Sendable, Hashable, CaseIterable {
+	/// The border slides from the old pane to the new one on the pane motion curve, taking half
+	/// that curve's transition time.
+	case glide
+	/// The old border fades out while the new one fades in (0.539s on bezier(0.23, 1, 0.32, 1)).
+	case crossfade
+	/// The border jumps.
+	case off
 }

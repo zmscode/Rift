@@ -274,14 +274,18 @@ extension RiftLayout {
 		_ source: PaneID,
 		to target: PaneID,
 		zone: RiftDropZone,
-		splitID: UUID = UUID(),
+		splitID: UUID? = nil,
 		position: Double = 0.5
 	) -> RiftLayout? {
 		guard source != target, contains(source), contains(target) else { return nil }
 		guard let edge = zone.edge else { return swapping(source, target) }
-		guard let remaining = removing(.pane(source))?.remaining else { return nil }
+		guard let removal = removing(.pane(source)), let remaining = removal.remaining else {
+			return nil
+		}
+		// The new split takes the ID of the split the source left, so it animates as the same split.
 		return remaining.splitting(
-			target, with: source, edge: edge, splitID: splitID, position: position)
+			target, with: source, edge: edge,
+			splitID: splitID ?? removal.collapsedSplitID ?? UUID(), position: position)
 	}
 
 	/// Moves a pane between two layouts (for example another tab or window).

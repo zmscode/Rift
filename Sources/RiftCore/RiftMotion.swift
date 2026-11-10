@@ -60,6 +60,8 @@ public struct RiftMotionCurve: Hashable, Sendable {
 	public static let linear = bezier(0, 0, 1, 1)
 	/// Used for pop-in fades.
 	public static let fade = bezier(0.5, 0.5, 0.75, 1)
+	/// Used for focus border crossfades.
+	public static let crossfade = bezier(0.23, 1, 0.32, 1)
 
 	/// The spring's settling time, or `nil` for a bezier.
 	public var settlingDuration: Double? {
@@ -69,6 +71,10 @@ public struct RiftMotionCurve: Hashable, Sendable {
 
 	/// How long a transition on this curve takes: a spring's settling time, else 0.54 seconds.
 	public var transitionDuration: Double { settlingDuration ?? 0.54 }
+
+	/// How long the focus border takes to glide between panes on this curve: half the transition
+	/// time (0.27 seconds for a bezier).
+	public var borderGlideDuration: Double { settlingDuration.map { $0 / 2 } ?? 0.27 }
 
 	/// Progress (0 at the start, 1 at rest; a spring can overshoot) after `elapsed` seconds of a
 	/// transition lasting `duration`. Springs follow their own clock and use `duration` only to
@@ -194,6 +200,13 @@ public enum RiftAnimationStyle: String, Codable, Sendable, Hashable, CaseIterabl
 		case .natural: .naturalChrome
 		case .off: nil
 		}
+	}
+}
+
+extension RiftMotionTiming {
+	/// The focus border crossfade: 0.539 seconds × `timeScale` on `RiftMotionCurve.crossfade`.
+	public static func borderCrossfade(timeScale: Double = 1) -> Self {
+		Self(duration: 0.539 * timeScale, curve: .crossfade)
 	}
 }
 

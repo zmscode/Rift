@@ -54,6 +54,14 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 	}
 	private var runningLayoutAnimations = 0
 	private lazy var motion = RiftMotionDriver(view: self)
+	/// The focus border is drawn once, above all panes, so it can glide between them; the
+	/// departing copy fades out during a crossfade.
+	private let focusOverlay = RiftFocusBorderView()
+	private let departingFocusOverlay = RiftFocusBorderView()
+	private var borderPane: PaneID?
+	private var borderGlides = false
+	private var keyObservers: [NSObjectProtocol] = []
+	private static var borderTrack: AnyHashable { "rift.focusBorder" }
 	private static var layoutTrack: AnyHashable { "rift.layout" }
 
 	// MARK: Private state
@@ -92,6 +100,11 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 		wantsLayer = true
 		dropIndicator.isHidden = true
 		addSubview(dropIndicator)
+		for overlay in [departingFocusOverlay, focusOverlay] {
+			overlay.isFocused = true
+			overlay.isHidden = true
+			addSubview(overlay, positioned: .below, relativeTo: dropIndicator)
+		}
 		applyConfiguration()
 		applyLayout(layout, animated: false)
 		focusedStorage = layout?.firstPaneID
@@ -162,7 +175,7 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 			let content = pendingContent.removeValue(forKey: id) ?? makePaneView(id)
 			let container = RiftPaneContainerView(content: content)
 			configure(container, for: id)
-			addSubview(container, positioned: .below, relativeTo: dropIndicator)
+			addSubview(container, positioned: .below, relativeTo: departingFocusOverlay)
 			containers[id] = container
 			added.insert(id)
 		}
@@ -201,15 +214,28 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 		container.header.showsCloseButton = configuration.showsCloseButtons
 		container.cornerRadius = configuration.paneCornerRadius
 		container.inactiveAlpha = configuration.inactivePaneAlpha
-		container.border.isEnabled = configuration.showsFocusBorder
-		container.border.color = configuration.focusBorderColor
-		container.border.lineWidth = configuration.focusBorderWidth
+		container.border.isEnabled = false  // drawn by focusOverlay
+	}
+
+	private func applyFocusBorderStyle() {
+		let base = configuration.focusBorderColor ?? .controlAccentColor
+		let active = window?.isKeyWindow ?? true
+		let color = active
+			? base
+			: base.withAlphaComponent(base.alphaComponent * configuration.inactiveWindowFocusBorderOpacity)
+		for overlay in [focusOverlay, departingFocusOverlay] {
+			overlay.isEnabled = configuration.showsFocusBorder
+			overlay.color = color
+			overlay.lineWidth = configuration.focusBorderWidth
+			overlay.cornerRadius = configuration.paneCornerRadius
+		}
 	}
 
 	private func applyConfiguration() {
 		containers.values.forEach(applyConfiguration(to:))
 		dropIndicator.color = configuration.dropIndicatorColor
 		dropIndicator.cornerRadius = configuration.dropIndicatorCornerRadius
+		applyFocusBorderStyle()
 		updateTrackingArea()
 		updateWindowChrome()
 		updateGlass()
@@ -298,6 +324,7 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 		guard animate, let curve = configuration.animationStyle.paneCurve else {
 			for move in moves { move.container.frame = move.to }
 			placeGlass(geometry.paneFrames, animated: false)
+			syncFocusBorderFrame()
 			return
 		}
 		popping.forEach(popIn)
@@ -318,6 +345,7 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 					frames[move.id] = frame
 				}
 				self.placeGlass(frames, animated: false)
+				self.syncFocusBorderFrame()
 			},
 			completion: { [weak self] in
 				guard let self else { return }
@@ -581,6 +609,74 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 
 	private func updateFocusAppearance() {
 		for (id, container) in containers { container.isFocused = id == focusedStorage }
+		updateFocusBorder(animated: true)
+	}
+
+	/// Moves the focus border to the focused pane, gliding or crossfading when it changes pane.
+	private func updateFocusBorder(animated: Bool) {
+		guard configuration.showsFocusBorder, let pane = focusedStorage,
+			let target = containers[pane], !target.isHidden
+		else {
+			motion.cancel(Self.borderTrack, finishing: false)
+			focusOverlay.isHidden = true
+			departingFocusOverlay.isHidden = true
+			borderPane = nil
+			return
+		}
+		let previous = borderPane
+		borderPane = pane
+		let moved = previous != nil && previous != pane && !focusOverlay.isHidden
+		focusOverlay.isHidden = false
+		let transition = shouldAnimate && animated && moved ? configuration.focusBorderTransition : .off
+		switch transition {
+		case .off:
+			if previous == pane, motion.isRunning(Self.borderTrack) { return }
+			motion.cancel(Self.borderTrack, finishing: false)
+			borderGlides = false
+			departingFocusOverlay.isHidden = true
+			focusOverlay.alphaValue = 1
+			focusOverlay.frame = target.frame
+		case .glide:
+			guard let curve = configuration.animationStyle.paneCurve else { return }
+			let timing = RiftMotionTiming(duration: curve.borderGlideDuration, curve: curve)
+			let start = focusOverlay.frame
+			departingFocusOverlay.isHidden = true
+			focusOverlay.alphaValue = 1
+			borderGlides = true
+			motion.run(
+				Self.borderTrack, duration: timing.duration,
+				apply: { [weak self, weak target] elapsed in
+					guard let self, let target else { return }
+					self.focusOverlay.frame = start.rift_interpolated(
+						to: target.frame, progress: timing.progress(elapsed: elapsed))
+				},
+				completion: { [weak self] in self?.borderGlides = false })
+		case .crossfade:
+			let timing = RiftMotionTiming.borderCrossfade(timeScale: configuration.popInTimeScale)
+			departingFocusOverlay.frame = focusOverlay.frame
+			departingFocusOverlay.isHidden = false
+			focusOverlay.frame = target.frame
+			borderGlides = false
+			motion.run(
+				Self.borderTrack, duration: timing.duration,
+				apply: { [weak self] elapsed in
+					guard let self else { return }
+					let p = CGFloat(min(max(timing.progress(elapsed: elapsed), 0), 1))
+					self.focusOverlay.alphaValue = p
+					self.departingFocusOverlay.alphaValue = 1 - p
+				},
+				completion: { [weak self] in
+					self?.departingFocusOverlay.isHidden = true
+					self?.focusOverlay.alphaValue = 1
+				})
+		}
+	}
+
+	/// Keeps the focus border on the focused pane while panes move (a glide tracks it itself).
+	private func syncFocusBorderFrame() {
+		guard !borderGlides, let pane = borderPane, let target = containers[pane] else { return }
+		focusOverlay.frame = target.frame
+		if target.isHidden { updateFocusBorder(animated: false) }
 	}
 
 	open override func viewDidMoveToWindow() {
@@ -595,6 +691,14 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 		}
 		updateWindowChrome()
 		RiftViewRegistry.register(self)
+		keyObservers.forEach(NotificationCenter.default.removeObserver)
+		keyObservers = [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification].map {
+			NotificationCenter.default.addObserver(forName: $0, object: window, queue: .main) {
+				[weak self] _ in
+				MainActor.assumeIsolated { self?.applyFocusBorderStyle() }
+			}
+		}
+		applyFocusBorderStyle()
 		observeContainerAnimations()
 		// Clicking anywhere in a pane focuses it, without stealing the click from the content.
 		mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [
@@ -1045,11 +1149,10 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 			return nil
 		}
 		if source === self, target == pane { return nil }
-		var zone = RiftDropZone.classify(point, in: frame, preferredBand: configuration.dropBand)
-		// A swap only makes sense inside one view; elsewhere the middle splits on the nearest edge.
-		if zone == .center, source !== self || !configuration.allowsCenterDrop {
-			zone = RiftDropZone(edge: RiftDropZone.nearestEdge(to: point, in: frame))
-		}
+		let zone = RiftDropZone.classify(point, in: frame, preferredBand: configuration.dropBand)
+		// The middle of a pane swaps, which only works inside one view. Anywhere else (or with
+		// centre drops turned off) the middle is not a drop target.
+		if zone == .center, source !== self || !configuration.allowsCenterDrop { return nil }
 		return RiftDropTarget(
 			pane: target, zone: zone,
 			indicator: zone.indicatorRect(in: frame, inset: configuration.dropIndicatorInset))

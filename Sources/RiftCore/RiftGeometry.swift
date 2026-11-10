@@ -14,8 +14,8 @@ public struct RiftMetrics: Equatable, Sendable {
 
 	public init(
 		dividerThickness: CGFloat = 1,
-		minimumPaneSize: CGSize = CGSize(width: 80, height: 60),
-		dividerHitThickness: CGFloat = 8,
+		minimumPaneSize: CGSize = CGSize(width: 160, height: 120),
+		dividerHitThickness: CGFloat = 16,
 		displayScale: CGFloat = 2
 	) {
 		self.dividerThickness = dividerThickness

@@ -234,13 +234,24 @@ private let noMinimums = RiftMetrics(dividerThickness: 0, minimumPaneSize: .zero
 
 @Suite struct ArrangementTests {
 	@Test func balanceGivesEachColumnEqualWidth() {
-		// a | (b / c) | d  — three columns.
-		let layout = threePanes().splitting("b", with: "d", edge: .right)!
+		// a | b | c as nested same-axis splits: each pane gets a third.
+		let layout = Layout.pane("a")
+			.splitting("a", with: "b", edge: .right)!
+			.splitting("b", with: "c", edge: .right)!
 		let balanced = layout.balanced()
 		let geometry = balanced.geometry(
 			in: CGRect(x: 0, y: 0, width: 300, height: 100), metrics: noMinimums)
 		#expect(geometry.paneFrames["a"]?.width == 100)
-		#expect(geometry.paneFrames["d"]?.width == 100)
+		#expect(geometry.paneFrames["c"]?.width == 100)
+	}
+
+	@Test func balanceCountsACrossAxisSubtreeAsOneSlot() {
+		// a | ((b | d) / c): the right side is split across the axis, so it counts as one slot.
+		let layout = threePanes().splitting("b", with: "d", edge: .right)!
+		let geometry = layout.balanced().geometry(
+			in: CGRect(x: 0, y: 0, width: 300, height: 100), metrics: noMinimums)
+		#expect(geometry.paneFrames["a"]?.width == 150)
+		#expect(geometry.paneFrames["b"]?.width == 75)
 	}
 
 	@Test func balanceKeepsPlacedDividers() {
