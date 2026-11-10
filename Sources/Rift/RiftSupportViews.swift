@@ -53,6 +53,7 @@ final class RiftPaneContainerView: RiftFlippedView {
 	required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
 	private func install(_ content: NSView) {
+		contentClip.wantsLayer = true
 		content.removeFromSuperview()
 		content.translatesAutoresizingMaskIntoConstraints = true
 		content.autoresizingMask = [.width, .height]
@@ -71,11 +72,26 @@ final class RiftPaneContainerView: RiftFlippedView {
 		layoutParts()
 	}
 
+	/// While set, the content keeps this pane size (top-left aligned, clipped) instead of following
+	/// the container, so it reflows once rather than on every animation frame.
+	var pinnedPaneSize: CGSize? {
+		didSet { if pinnedPaneSize != oldValue { layoutParts() } }
+	}
+
 	private func layoutParts() {
 		let h = showsHeader ? min(headerHeight, bounds.height) : 0
 		header.frame = CGRect(x: 0, y: 0, width: bounds.width, height: h)
 		contentClip.frame = CGRect(
 			x: 0, y: h, width: bounds.width, height: max(0, bounds.height - h))
+		contentClip.layer?.masksToBounds = pinnedPaneSize != nil
+		if let pinned = pinnedPaneSize {
+			contentView.autoresizingMask = []
+			contentView.frame = CGRect(
+				x: 0, y: 0, width: pinned.width, height: max(0, pinned.height - h))
+		} else {
+			contentView.autoresizingMask = [.width, .height]
+			contentView.frame = contentClip.bounds
+		}
 		// Without a header bar the strip floats over the top of the content.
 		strip.frame = CGRect(
 			x: 0, y: 0, width: bounds.width, height: min(headerHeight, bounds.height))
@@ -108,6 +124,8 @@ final class RiftPaneDragStripView: RiftFlippedView {
 	var onStripMouseDown: ((NSEvent) -> Void)?
 	/// Called when the pointer enters or leaves a part of the strip that takes the mouse.
 	var onPointerRegionChange: (() -> Void)?
+	/// While set, the strip ignores the mouse so a replayed click reaches the content.
+	var isReplayingClick = false
 
 	private let grip = NSImageView()
 	private var handleTrackingArea: NSTrackingArea?
@@ -180,6 +198,7 @@ final class RiftPaneDragStripView: RiftFlippedView {
 	// Only the handle (and, when it moves the window, the whole strip) take the mouse.
 	override func hitTest(_ point: NSPoint) -> NSView? {
 		let local = convert(point, from: superview)
+		guard !isReplayingClick else { return nil }
 		return handlesPoint(local) ? self : nil
 	}
 

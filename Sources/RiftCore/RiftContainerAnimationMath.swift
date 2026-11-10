@@ -2,6 +2,23 @@ import CoreGraphics
 
 /// Maths for resize notices sent to pane content before the layout animates to a new width.
 public enum RiftContainerAnimationMath {
+	/// The size a layout will have once a container width animation finishes.
+	///
+	/// The layout takes a share of `widthChange` equal to its fraction of `contentWidth`
+	/// (clamped to 0…1), or all of it when `contentWidth` is unknown or not positive. Returns `nil`
+	/// unless both sides of the result are positive.
+	public static func targetLayoutSize(
+		layoutSize: CGSize, contentWidth: CGFloat?, widthChange: CGFloat
+	) -> CGSize? {
+		var share: CGFloat = 1
+		if let contentWidth, contentWidth > 0 {
+			share = min(max(layoutSize.width / contentWidth, 0), 1)
+		}
+		let size = CGSize(width: layoutSize.width + widthChange * share, height: layoutSize.height)
+		guard size.width > 0, size.height > 0 else { return nil }
+		return size
+	}
+
 	/// Predicts a pane's size once a container width animation finishes.
 	///
 	/// The pane takes a share of `widthChange` equal to its fraction of `contentWidth`

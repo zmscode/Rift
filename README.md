@@ -13,7 +13,7 @@ A split-pane layout component for macOS (AppKit + SwiftUI).
     - Grabbing a point where two dividers cross moves both at once.
     - Double-clicking a divider centres it.
 - **Top strip (default, no header bars):** each pane has an invisible strip along its top, 28pt tall (`headerHeight`).
-    - The top-left corner, 44pt wide (`dragHandleWidth`), drags the pane. A grip fades in while the pointer is over it.
+    - The top-left corner, 44pt wide (`dragHandleWidth`), drags the pane. A grip fades in while the pointer is over it. The drag starts on the first mouse movement. A press that ends without moving is passed through to the pane's content as a normal click.
     - On panes at the top of a headless window, the rest of the strip moves the window, and double-clicking it acts like a titlebar double-click. On all other panes, the rest of the strip does nothing and clicks reach the content.
     - On the pane under the window buttons, the corner handle starts just after the buttons.
     - Set `showsPaneHeaders = true` for header bars with a title and close button instead.
@@ -37,7 +37,7 @@ A split-pane layout component for macOS (AppKit + SwiftUI).
     - The titlebar and title are hidden, and content runs edge to edge.
     - The real close, minimise and zoom buttons stay, centred in the top row of pane headers. Rift resizes the titlebar container using public `NSView` calls only, and re-applies the layout whenever AppKit redoes it.
     - Panes under the buttons leave room for them.
-    - Dragging a pane header moves the window, and double-clicking it follows the system's titlebar double-click setting. Panes are then moved with the grip (≡) or by Option-dragging the header (`headerDragBehavior`).
+    - Pressing a pane header moves the window straight away, with no movement threshold. Double-clicking it performs the system titlebar double-click action: the window's frame view handles it when it can, and otherwise Rift reads the System Settings preference. Panes are then moved with the grip (≡) or by Option-dragging the header (`headerDragBehavior`).
     - While the pointer is over a pane header, and for the whole length of a pane drag, Rift sets the window's `isMovable` to `false`, using a reference-counted lock. Without it, macOS would start its own window drag in the header strip. The lock is recomputed from the pointer's real position, so it can't leak when a drag swallows mouse-exit events. Moving the window from a header waits for real mouse movement, then lifts the lock and calls `performDrag(with:)`.
     - Full screen and turning the mode off restore the normal layout.
     - `RiftHeadlessWindow` can also be used on its own.
@@ -45,6 +45,7 @@ A split-pane layout component for macOS (AppKit + SwiftUI).
   - Rift posts `RiftContainerAnimation.willBeginNotification` and `didEndNotification`, with the window as the object. The "will begin" notice carries `contentWidth` and `widthChange` in its `userInfo`.
   - Pane content listens through `RiftContainerAnimationObserver` and either freezes until the end (`.holdContent`) or resizes once, straight to its predicted final size (`.resizeToTarget`). That size is the pane's share of `widthChange`, in proportion to its share of `contentWidth`.
   - An observer gives up by itself if no end notice arrives within 2 seconds.
+    - The `RiftView` listens for its own notices too. When an animation begins, it lays the panes out once at the size the view will end up, and holds each pane's content at that size, clipped, until the end notice arrives. Content therefore reflows once instead of on every frame.
 - **Structural activity:** `structuralActivity` and `onStructuralActivityChange` report what is reshaping the panes right now: an animated layout change, a divider drag, a live window resize or a pane drag. Pane content can use this to stop scrollers flashing or to pause redraws.
 - **Glass panes:** set `configuration.glass.isEnabled`.
   - On macOS 26 and later each pane sits on an `NSGlassEffectView` inside one `NSGlassEffectContainerView` behind the panes. Earlier systems use `NSVisualEffectView` with the `.popover` material.

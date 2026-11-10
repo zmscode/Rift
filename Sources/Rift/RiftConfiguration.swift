@@ -94,7 +94,9 @@ public struct RiftConfiguration {
 	/// `nil` uses the system accent color.
 	public var dropIndicatorColor: NSColor?
 	/// Distance the mouse must travel before a pane drag starts.
-	public var dragStartDistance: CGFloat = 4
+	/// 0 (the default) starts the drag on the first mouse-dragged event; a press that ends
+	/// without moving is passed through to the pane content as a click.
+	public var dragStartDistance: CGFloat = 0
 	public var dragPreviewMaxSize = CGSize(width: 280, height: 200)
 
 	// Motion

@@ -68,6 +68,9 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 	private var trackingArea: NSTrackingArea?
 	private var headlessWindow: RiftHeadlessWindow?
 	private var glass: RiftGlassController?
+	/// Pane sizes at the target of a running container animation (see RiftContainerAnimation).
+	private var containerAnimationPaneSizes: [PaneID: CGSize]?
+	private var containerAnimationObservers: [NSObjectProtocol] = []
 	/// Held while the pointer is over a pane header, so the system doesn't drag the window there.
 	private var hoverLock: RiftMovementLockToken?
 	/// Set while the system moves the window from a header; cleared on the next mouse move.
@@ -173,8 +176,8 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 			self?.trackPaneDrag(id, startingWith: event)
 		}
 		container.header.onClose = { [weak self] in self?.close(id) }
-		container.strip.onHandleMouseDown = { [weak self] event in
-			self?.trackPaneDrag(id, startingWith: event)
+		container.strip.onHandleMouseDown = { [weak self, weak strip = container.strip] event in
+			self?.trackPaneDrag(id, startingWith: event, replayingClicksThrough: strip)
 		}
 		container.strip.onStripMouseDown = { [weak self] event in
 			self?.beginWindowDrag(from: id, with: event)
@@ -563,6 +566,7 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 		}
 		updateWindowChrome()
 		RiftViewRegistry.register(self)
+		observeContainerAnimations()
 		// Clicking anywhere in a pane focuses it, without stealing the click from the content.
 		mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [
 			.leftMouseDown, .rightMouseDown, .otherMouseDown,
@@ -573,6 +577,69 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 		}
 		placeContainers(animated: false, added: [])
 		updateTrackingArea()
+	}
+
+	// MARK: Container animations
+
+	private func observeContainerAnimations() {
+		guard containerAnimationObservers.isEmpty else { return }
+		let center = NotificationCenter.default
+		containerAnimationObservers.append(
+			center.addObserver(
+				forName: RiftContainerAnimation.willBeginNotification, object: nil, queue: .main
+			) { [weak self] note in
+				let object = (note.object as AnyObject?).map(ObjectIdentifier.init)
+				let widthChange =
+					(note.userInfo?[RiftContainerAnimation.widthChangeKey] as? NSNumber)?.doubleValue
+				let contentWidth =
+					(note.userInfo?[RiftContainerAnimation.contentWidthKey] as? NSNumber)?.doubleValue
+				MainActor.assumeIsolated {
+					self?.containerAnimationWillBegin(
+						object: object, widthChange: widthChange, contentWidth: contentWidth)
+				}
+			})
+		containerAnimationObservers.append(
+			center.addObserver(
+				forName: RiftContainerAnimation.didEndNotification, object: nil, queue: .main
+			) { [weak self] note in
+				let object = (note.object as AnyObject?).map(ObjectIdentifier.init)
+				MainActor.assumeIsolated { self?.containerAnimationDidEnd(object: object) }
+			})
+	}
+
+	private func isOwnWindow(_ object: ObjectIdentifier?) -> Bool {
+		guard let window, let object else { return false }
+		return object == ObjectIdentifier(window)
+	}
+
+	/// Lays the panes out once at the size this view will have when the animation ends, and holds
+	/// each pane's content at that size until it does.
+	private func containerAnimationWillBegin(
+		object: ObjectIdentifier?, widthChange: Double?, contentWidth: Double?
+	) {
+		guard isOwnWindow(object), let widthChange, let layout = paneLayout,
+			let target = RiftContainerAnimationMath.targetLayoutSize(
+				layoutSize: bounds.size, contentWidth: contentWidth.map { CGFloat($0) },
+				widthChange: CGFloat(widthChange))
+		else { return }
+		let targetBounds = CGRect(origin: .zero, size: target)
+		var sizes: [PaneID: CGSize] = [:]
+		if let zoomed = zoomedPane {
+			sizes[zoomed] = target
+		} else {
+			for (id, frame) in layout.geometry(in: targetBounds, metrics: effectiveMetrics).paneFrames {
+				sizes[id] = frame.size
+			}
+		}
+		containerAnimationPaneSizes = sizes
+		for (id, container) in containers { container.pinnedPaneSize = sizes[id] }
+	}
+
+	private func containerAnimationDidEnd(object: ObjectIdentifier?) {
+		guard isOwnWindow(object), containerAnimationPaneSizes != nil else { return }
+		containerAnimationPaneSizes = nil
+		for container in containers.values { container.pinnedPaneSize = nil }
+		placeContainers(animated: false, added: [])
 	}
 
 	open override func viewWillMove(toWindow newWindow: NSWindow?) {
@@ -692,29 +759,11 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 		guard let window else { return }
 		if focusedStorage != pane { setFocus(pane, notify: true, makeFirstResponder: true) }
 		if event.clickCount == 2 {
-			RiftHeadlessWindow.performTitlebarDoubleClick(on: window)
+			RiftHeadlessWindow.performTitlebarDoubleClick(on: window, event: event)
 			return
 		}
-		// The header holds the window still (see RiftWindowMovementLock). Only once the mouse
-		// really moves do we let go and hand the drag to the system, so a click just focuses.
-		let start = event.locationInWindow
-		let state = RiftWindowDragState()
-		window.trackEvents(
-			matching: [.leftMouseDragged, .leftMouseUp],
-			timeout: NSEvent.foreverDuration,
-			mode: .eventTracking
-		) { event, stop in
-			let finished = MainActor.assumeIsolated { () -> Bool in
-				guard let event, event.type == .leftMouseDragged else { return true }
-				let distance = hypot(
-					event.locationInWindow.x - start.x, event.locationInWindow.y - start.y)
-				guard distance >= 3 else { return false }
-				state.shouldMoveWindow = true
-				return true
-			}
-			if finished { stop.pointee = true }
-		}
-		guard state.shouldMoveWindow else { return }
+		// Hand the drag to the system straight away on mouse-down. The header holds the window
+		// still while hovered (see RiftWindowMovementLock), so lift that first.
 		isHoverLockSuspended = true
 		refreshMovementLock()
 		guard !RiftWindowMovementLock.isLocked(window) else {
@@ -869,6 +918,15 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 	/// this; call it from your own drag handle's `mouseDown(with:)` to make it draggable too.
 	/// Returns once the mouse is released. A press without movement just focuses the pane.
 	public func trackPaneDrag(_ pane: PaneID, startingWith event: NSEvent) {
+		trackPaneDrag(pane, startingWith: event, replayingClicksThrough: nil)
+	}
+
+	/// - Parameter replayView: a handle sitting over the pane's content. A press that ends without
+	///   any drag is sent again to the window with this view ignoring the mouse, so the content
+	///   underneath gets the click.
+	func trackPaneDrag(
+		_ pane: PaneID, startingWith event: NSEvent, replayingClicksThrough replayView: RiftPaneDragStripView?
+	) {
 		guard let window, paneLayout?.contains(pane) == true else { return }
 		guard configuration.allowsPaneDragging else {
 			focus(pane)
@@ -881,6 +939,7 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 			refreshMovementLock()
 		}
 		let start = event.locationInWindow
+		let mouseDown = event
 		let state = RiftDragTrackingState<PaneID>()
 		window.trackEvents(
 			matching: [.leftMouseDragged, .leftMouseUp, .keyDown],
@@ -889,7 +948,9 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 		) { [weak self] event, stop in
 			let finished = MainActor.assumeIsolated { () -> Bool in
 				guard let self, let event else { return true }
-				return self.handlePaneDragEvent(event, pane: pane, start: start, state: state)
+				return self.handlePaneDragEvent(
+					event, pane: pane, start: start, state: state, mouseDown: mouseDown,
+					replayView: replayView)
 			}
 			if finished { stop.pointee = true }
 		}
@@ -897,7 +958,8 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 
 	/// Returns `true` when tracking should stop.
 	private func handlePaneDragEvent(
-		_ event: NSEvent, pane: PaneID, start: CGPoint, state: RiftDragTrackingState<PaneID>
+		_ event: NSEvent, pane: PaneID, start: CGPoint, state: RiftDragTrackingState<PaneID>,
+		mouseDown: NSEvent, replayView: RiftPaneDragStripView?
 	) -> Bool {
 		// Use the event's own location rather than the global cursor position, so the drop matches
 		// exactly where the release happened.
@@ -922,6 +984,12 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 				session.drop(at: screenPoint)
 			} else {
 				focus(pane)
+				if let replayView, let window {
+					replayView.isReplayingClick = true
+					window.sendEvent(mouseDown)
+					window.sendEvent(event)
+					replayView.isReplayingClick = false
+				}
 			}
 			return true
 		case .keyDown where event.keyCode == 53:  // Escape
@@ -1098,11 +1166,6 @@ struct RiftDropTarget<PaneID: Hashable & Sendable> {
 	var zone: RiftDropZone
 	/// Highlight rectangle in the target view's coordinates.
 	var indicator: CGRect
-}
-
-@MainActor
-final class RiftWindowDragState {
-	var shouldMoveWindow = false
 }
 
 @MainActor

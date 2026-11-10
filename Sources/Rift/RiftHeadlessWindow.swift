@@ -159,7 +159,24 @@ public final class RiftHeadlessWindow {
 	}
 
 	/// Performs the user's chosen titlebar double-click action (System Settings › Desktop & Dock).
-	public static func performTitlebarDoubleClick(on window: NSWindow) {
+	///
+	/// The window's frame view handles it when it can, so the result matches a real titlebar.
+	/// Otherwise the System Settings preference is read and applied here.
+	public static func performTitlebarDoubleClick(on window: NSWindow, event: NSEvent) {
+		if let frameView = window.contentView?.superview {
+			let withModifiers = NSSelectorFromString("_handlePossibleDoubleClickWithModifiers:")
+			let forEvent = NSSelectorFromString("_handlePossibleDoubleClickForEvent:")
+			if frameView.responds(to: withModifiers) {
+				typealias Handler = @convention(c) (AnyObject, Selector, UInt) -> Void
+				let handler = unsafeBitCast(frameView.method(for: withModifiers), to: Handler.self)
+				handler(frameView, withModifiers, event.modifierFlags.rawValue)
+				return
+			}
+			if frameView.responds(to: forEvent) {
+				_ = frameView.perform(forEvent, with: event)
+				return
+			}
+		}
 		let defaults = UserDefaults.standard
 		switch defaults.string(forKey: "AppleActionOnDoubleClick") {
 		case "None":
