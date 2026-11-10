@@ -46,6 +46,9 @@ public struct RiftConfiguration {
 	/// Space kept between the window buttons and pane header content.
 	public var windowButtonSpacing: CGFloat = 8
 
+	/// Liquid glass behind panes. Off by default.
+	public var glass = RiftGlassConfiguration()
+
 	public var metrics = RiftMetrics()
 	public var snap = RiftSnapConfiguration()
 
@@ -98,4 +101,19 @@ public struct RiftConfiguration {
 	public var animationDuration: TimeInterval = 0.2
 
 	public init() {}
+}
+
+/// What is reshaping a `RiftView`'s panes right now.
+public struct RiftStructuralActivity: OptionSet, Sendable, Hashable {
+	public let rawValue: Int
+	public init(rawValue: Int) { self.rawValue = rawValue }
+
+	/// An animated layout change (split, close, move, zoom, balance…) is running.
+	public static let structuralTransition = RiftStructuralActivity(rawValue: 1 << 0)
+	/// A divider is being dragged.
+	public static let dividerDrag = RiftStructuralActivity(rawValue: 1 << 1)
+	/// The window is being resized live.
+	public static let windowLiveResize = RiftStructuralActivity(rawValue: 1 << 2)
+	/// A pane is being dragged.
+	public static let paneDrag = RiftStructuralActivity(rawValue: 1 << 3)
 }

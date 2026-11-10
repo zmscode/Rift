@@ -3,18 +3,24 @@ import Rift
 
 /// A colourful pane with an editable field, so focus and first responder are easy to see.
 final class DemoPaneView: NSView {
+	private let hue: CGFloat
+	private let status = NSTextField(labelWithString: "")
+	private var resizeObserver: RiftContainerAnimationObserver?
+
 	init(name: String, hue: CGFloat) {
+		self.hue = hue
 		super.init(frame: .zero)
 		wantsLayer = true
-		layer?.backgroundColor =
-			NSColor(calibratedHue: hue, saturation: 0.35, brightness: 0.85, alpha: 1).cgColor
+		setTranslucent(false)
 
 		let label = NSTextField(labelWithString: name)
 		label.font = .systemFont(ofSize: 22, weight: .semibold)
 		label.textColor = NSColor(calibratedWhite: 0.1, alpha: 0.85)
 		let field = NSTextField(string: "")
 		field.placeholderString = "Type here…"
-		let stack = NSStackView(views: [label, field])
+		status.font = .systemFont(ofSize: 11, weight: .medium)
+		status.textColor = NSColor(calibratedWhite: 0.1, alpha: 0.7)
+		let stack = NSStackView(views: [label, field, status])
 		stack.orientation = .vertical
 		stack.spacing = 10
 		stack.translatesAutoresizingMaskIntoConstraints = false
@@ -28,6 +34,68 @@ final class DemoPaneView: NSView {
 
 	@available(*, unavailable)
 	required init?(coder: NSCoder) { fatalError() }
+
+	/// With glass on, let the glass behind the pane show through.
+	func setTranslucent(_ translucent: Bool) {
+		layer?.backgroundColor =
+			NSColor(calibratedHue: hue, saturation: 0.35, brightness: 0.85, alpha: translucent ? 0.35 : 1)
+			.cgColor
+	}
+
+	override func viewDidMoveToWindow() {
+		super.viewDidMoveToWindow()
+		guard window != nil, resizeObserver == nil else { return }
+		// Show what a terminal would do: freeze while the container animates.
+		let observer = RiftContainerAnimationObserver(view: self, handling: .holdContent)
+		observer.onHoldChange = { [weak self] holding in
+			self?.status.stringValue = holding ? "Holding during resize…" : ""
+		}
+		resizeObserver = observer
+	}
+}
+
+/// The window's content: an optional sidebar strip and the Rift view.
+final class DemoWindowContent: NSView {
+	let rift: RiftView<String>
+	private(set) var sidebarWidth: CGFloat = 0
+
+	init(rift: RiftView<String>) {
+		self.rift = rift
+		super.init(frame: .zero)
+		wantsLayer = true
+		layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+		rift.autoresizingMask = [.width, .height]
+		addSubview(rift)
+	}
+
+	@available(*, unavailable)
+	required init?(coder: NSCoder) { fatalError() }
+
+	override func setFrameSize(_ newSize: NSSize) {
+		super.setFrameSize(newSize)
+		rift.frame = riftFrame(sidebar: sidebarWidth)
+	}
+
+	private func riftFrame(sidebar: CGFloat) -> CGRect {
+		CGRect(x: sidebar, y: 0, width: max(0, bounds.width - sidebar), height: bounds.height)
+	}
+
+	/// Folds a 220pt sidebar in or out, telling panes before and after (like a sidebar fold).
+	func toggleSidebar() {
+		let target: CGFloat = sidebarWidth > 0 ? 0 : 220
+		let frame = riftFrame(sidebar: target)
+		rift.beginContainerAnimation(toWidth: frame.width)
+		sidebarWidth = target
+		NSAnimationContext.runAnimationGroup(
+			{ context in
+				context.duration = 0.6
+				context.allowsImplicitAnimation = true
+				rift.animator().frame = frame
+			},
+			completionHandler: { [weak self] in
+				MainActor.assumeIsolated { self?.rift.endContainerAnimation() }
+			})
+	}
 }
 
 @MainActor
@@ -76,6 +144,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 			Task { @MainActor in window.close() }
 		}
 		view.onFocusChange = { [weak view] pane in view?.window?.subtitle = pane ?? "" }
+		view.onStructuralActivityChange = { [weak view] activity in
+			view?.window?.title = activity.isEmpty ? "Rift" : "Rift — reshaping"
+		}
 		view.onTearOut = { [weak self] pane, content, point in
 			guard let self else { return }
 			let size = CGSize(width: 520, height: 380)
@@ -84,7 +155,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 				frame: CGRect(
 					x: point.x - size.width / 2, y: point.y - size.height + 20, width: size.width,
 					height: size.height))
-			(window.contentView as? RiftView<String>)?.adopt(
+			(window.contentView as? DemoWindowContent)?.rift.adopt(
 				pane, content: content, reason: .tearOut)
 			window.makeKeyAndOrderFront(nil)
 		}
@@ -102,7 +173,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 		window.isReleasedWhenClosed = false
 		window.delegate = self
 		let view = makeRiftView(layout: layout)
-		window.contentView = view
+		window.contentView = DemoWindowContent(rift: view)
 		window.subtitle = view.focusedPane ?? ""
 		windows.append(window)
 		window.orderFront(nil)
@@ -114,7 +185,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 		windows.removeAll { $0 === window }
 	}
 
-	private var currentView: RiftView<String>? { NSApp.keyWindow?.contentView as? RiftView<String> }
+	private var currentView: RiftView<String>? {
+		(NSApp.keyWindow?.contentView as? DemoWindowContent)?.rift
+	}
 
 	// MARK: Menu actions
 
@@ -157,6 +230,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 	@objc func toggleZoom(_ sender: Any?) { currentView?.toggleZoom() }
 	@objc func toggleHeaders(_ sender: Any?) {
 		currentView?.configuration.showsPaneHeaders.toggle()
+	}
+	@objc func toggleSidebar(_ sender: Any?) {
+		(NSApp.keyWindow?.contentView as? DemoWindowContent)?.toggleSidebar()
+	}
+	@objc func toggleGlass(_ sender: Any?) {
+		guard let view = currentView else { return }
+		var configuration = view.configuration
+		configuration.glass.isEnabled.toggle()
+		configuration.glass.cornerRadius = 10
+		configuration.glass.outerRimColor = NSColor.white.withAlphaComponent(0.25)
+		configuration.glass.outerRimWidth = 1
+		configuration.glass.shadows = [RiftPaneShadow(opacity: 0.25, radius: 8, offset: CGSize(width: 0, height: -2))]
+		configuration.paneCornerRadius = configuration.glass.isEnabled ? 10 : 6
+		view.configuration = configuration
+		for id in view.paneLayout?.paneIDs ?? [] {
+			(view.contentView(for: id) as? DemoPaneView)?.setTranslucent(configuration.glass.isEnabled)
+		}
 	}
 	@objc func toggleHeadless(_ sender: Any?) {
 		guard let view = currentView else { return }
@@ -244,6 +334,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 		add(pane, "Balance Panes", #selector(balance(_:)), "=", [.command, .control])
 		add(pane, "Zoom Pane", #selector(toggleZoom(_:)), "\r", [.command, .shift])
 		add(pane, "Toggle Headers", #selector(toggleHeaders(_:)), "h", [.command, .control])
+		add(
+			pane, "Toggle Sidebar (resize notices)", #selector(toggleSidebar(_:)), "s", [.command, .control])
+		add(pane, "Toggle Glass", #selector(toggleGlass(_:)), "g", [.command, .control])
 		add(
 			pane, "Toggle Headless Window", #selector(toggleHeadless(_:)), "t",
 			[.command, .control])

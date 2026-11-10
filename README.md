@@ -41,6 +41,16 @@ A split-pane layout component for macOS (AppKit + SwiftUI).
     - While the pointer is over a pane header, and for the whole length of a pane drag, Rift sets the window's `isMovable` to `false`, using a reference-counted lock. Without it, macOS would start its own window drag in the header strip. The lock is recomputed from the pointer's real position, so it can't leak when a drag swallows mouse-exit events. Moving the window from a header waits for real mouse movement, then lifts the lock and calls `performDrag(with:)`.
     - Full screen and turning the mode off restore the normal layout.
     - `RiftHeadlessWindow` can also be used on its own.
+- **Resize notices:** before you animate a `RiftView` to a new width (for example when folding a sidebar), call `beginContainerAnimation(toWidth:)`; call `endContainerAnimation()` when the animation is done.
+  - Rift posts `RiftContainerAnimation.willBeginNotification` and `didEndNotification`, with the window as the object. The "will begin" notice carries `contentWidth` and `widthChange` in its `userInfo`.
+  - Pane content listens through `RiftContainerAnimationObserver` and either freezes until the end (`.holdContent`) or resizes once, straight to its predicted final size (`.resizeToTarget`). That size is the pane's share of `widthChange`, in proportion to its share of `contentWidth`.
+  - An observer gives up by itself if no end notice arrives within 2 seconds.
+- **Structural activity:** `structuralActivity` and `onStructuralActivityChange` report what is reshaping the panes right now: an animated layout change, a divider drag, a live window resize or a pane drag. Pane content can use this to stop scrollers flashing or to pause redraws.
+- **Glass panes:** set `configuration.glass.isEnabled`.
+  - On macOS 26 and later each pane sits on an `NSGlassEffectView` inside one `NSGlassEffectContainerView` behind the panes. Earlier systems use `NSVisualEffectView` with the `.popover` material.
+  - Settings: style (regular or clear), tint, corner radius, outer rim colour and width, shadows, and `mergeFactor`.
+  - Panes only merge when there is no gap between them.
+  - Pane content must be partly transparent for the glass to show.
 - **Accessibility:** each divider is an adjustable `AXSplitter`. Increment and decrement move it by 5%.
 - **Reduce Motion:** animations are skipped when the system setting is on.
 
@@ -115,3 +125,5 @@ Demo shortcuts:
 | ⇧⌘↩         | Zoom the pane             |
 | ⌃⌘H         | Toggle header bars        |
 | ⌃⌘T         | Toggle headless window    |
+| ⌃⌘S         | Fold a sidebar (shows resize notices) |
+| ⌃⌘G         | Toggle glass panes        |

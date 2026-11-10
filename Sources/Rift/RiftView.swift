@@ -42,6 +42,17 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 	/// handler receives its content view and the drop point in screen coordinates, and would
 	/// typically open a new window with `adopt(_:content:)`. Leave `nil` to disable tear-out.
 	public var onTearOut: ((PaneID, NSView, CGPoint) -> Void)?
+	/// Called whenever `structuralActivity` changes.
+	public var onStructuralActivityChange: ((RiftStructuralActivity) -> Void)?
+
+	/// What is reshaping the panes right now. Pane content can use it to stop scrollers flashing,
+	/// pause expensive redraws, and so on, while anything is set.
+	public private(set) var structuralActivity: RiftStructuralActivity = [] {
+		didSet {
+			if structuralActivity != oldValue { onStructuralActivityChange?(structuralActivity) }
+		}
+	}
+	private var runningLayoutAnimations = 0
 
 	// MARK: Private state
 
@@ -56,6 +67,7 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 	private var mouseMonitor: Any?
 	private var trackingArea: NSTrackingArea?
 	private var headlessWindow: RiftHeadlessWindow?
+	private var glass: RiftGlassController?
 	/// Held while the pointer is over a pane header, so the system doesn't drag the window there.
 	private var hoverLock: RiftMovementLockToken?
 	/// Set while the system moves the window from a header; cleared on the next mouse move.
@@ -195,8 +207,34 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 		dropIndicator.cornerRadius = configuration.dropIndicatorCornerRadius
 		updateTrackingArea()
 		updateWindowChrome()
+		updateGlass()
 		placeContainers(animated: false, added: [])
 		needsDisplay = true
+	}
+
+	/// Creates, updates or removes the glass container behind the panes.
+	private func updateGlass() {
+		guard configuration.glass.isEnabled else {
+			glass?.containerView.removeFromSuperview()
+			glass = nil
+			return
+		}
+		let controller = glass ?? RiftGlassController()
+		if glass == nil {
+			glass = controller
+			controller.containerView.frame = bounds
+			controller.containerView.autoresizingMask = [.width, .height]
+			// Behind every pane.
+			addSubview(controller.containerView, positioned: .below, relativeTo: nil)
+		}
+		controller.apply(configuration.glass, gap: configuration.metrics.dividerThickness)
+	}
+
+	private func placeGlass(_ frames: [PaneID: CGRect], animated: Bool) {
+		guard let glass else { return }
+		var keyed: [AnyHashable: CGRect] = [:]
+		for (id, frame) in frames { keyed[AnyHashable(id)] = frame }
+		glass.place(keyed, animated: animated)
 	}
 
 	private func title(for id: PaneID) -> String { paneTitle?(id) ?? String(describing: id) }
@@ -254,17 +292,31 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 				container.alphaValue =
 					draggingPane.flatMap { containers[$0] } === container ? 0.35 : 1
 			}
+			placeGlass(geometry.paneFrames, animated: false)
 			return
 		}
-		NSAnimationContext.runAnimationGroup { context in
-			context.duration = configuration.animationDuration
-			context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-			context.allowsImplicitAnimation = true
-			for (container, frame) in moves {
-				container.animator().frame = frame
-				container.animator().alphaValue = 1
-			}
-		}
+		runningLayoutAnimations += 1
+		structuralActivity.insert(.structuralTransition)
+		NSAnimationContext.runAnimationGroup(
+			{ context in
+				context.duration = configuration.animationDuration
+				context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+				context.allowsImplicitAnimation = true
+				for (container, frame) in moves {
+					container.animator().frame = frame
+					container.animator().alphaValue = 1
+				}
+				placeGlass(geometry.paneFrames, animated: true)
+			},
+			completionHandler: { [weak self] in
+				MainActor.assumeIsolated {
+					guard let self else { return }
+					self.runningLayoutAnimations = max(0, self.runningLayoutAnimations - 1)
+					if self.runningLayoutAnimations == 0 {
+						self.structuralActivity.remove(.structuralTransition)
+					}
+				}
+			})
 	}
 
 	open override func setFrameSize(_ newSize: NSSize) {
@@ -774,6 +826,7 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 		dividerCursor = cursor
 		window?.disableCursorRects()
 		cursor.set()
+		structuralActivity.insert(.dividerDrag)
 		onDividerDragChanged?(true)
 	}
 
@@ -806,6 +859,7 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 		dividerCursor = nil
 		window?.enableCursorRects()
 		window?.invalidateCursorRects(for: self)
+		structuralActivity.remove(.dividerDrag)
 		onDividerDragChanged?(false)
 	}
 
@@ -927,6 +981,21 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 		if let previous = draggingPane { containers[previous]?.alphaValue = 1 }
 		draggingPane = pane
 		if let pane { containers[pane]?.alphaValue = 0.35 }
+		if pane != nil {
+			structuralActivity.insert(.paneDrag)
+		} else {
+			structuralActivity.remove(.paneDrag)
+		}
+	}
+
+	open override func viewWillStartLiveResize() {
+		super.viewWillStartLiveResize()
+		structuralActivity.insert(.windowLiveResize)
+	}
+
+	open override func viewDidEndLiveResize() {
+		super.viewDidEndLiveResize()
+		structuralActivity.remove(.windowLiveResize)
 	}
 
 	/// A snapshot of a pane, used for the drag preview.
