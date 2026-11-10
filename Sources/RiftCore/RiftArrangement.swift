@@ -69,8 +69,90 @@ extension RiftLayout {
 		return movingDivider(id, by: edge.isLeading ? -points : points, in: rect, metrics: metrics)
 	}
 
-	/// The pane next to `pane` in `direction`, chosen by distance and then by how much the two overlap.
-	/// With `wraps`, continues from the opposite side of the layout when nothing lies that way.
+	/// Rect of every pane in unit space: the root is (0, 0, 1, 1), y grows downward, and each split
+	/// divides its rect by `position` with no room for dividers or minimum sizes.
+	public func unitRects() -> [PaneID: CGRect] {
+		var result: [PaneID: CGRect] = [:]
+		func visit(_ node: RiftLayout, _ rect: CGRect) {
+			switch node {
+			case .pane(let id):
+				result[id] = rect
+			case .split(let split):
+				let r = CGFloat(split.position)
+				switch split.axis {
+				case .horizontal:
+					visit(
+						split.first,
+						CGRect(
+							x: rect.minX, y: rect.minY, width: r * rect.width, height: rect.height))
+					visit(
+						split.second,
+						CGRect(
+							x: rect.minX + r * rect.width, y: rect.minY,
+							width: (1 - r) * rect.width, height: rect.height))
+				case .vertical:
+					visit(
+						split.first,
+						CGRect(
+							x: rect.minX, y: rect.minY, width: rect.width, height: r * rect.height))
+					visit(
+						split.second,
+						CGRect(
+							x: rect.minX, y: rect.minY + r * rect.height, width: rect.width,
+							height: (1 - r) * rect.height))
+				}
+			}
+		}
+		visit(self, CGRect(x: 0, y: 0, width: 1, height: 1))
+		return result
+	}
+
+	/// The pane next to `pane` in `direction`.
+	///
+	/// Works in unit space (see `unitRects()`). A candidate must lie wholly past the matching edge
+	/// of `pane`; it doesn't need to overlap it. The candidate whose top-left corner is closest to
+	/// `pane`'s top-left corner wins, and ties go to the pane earlier in layout order. With
+	/// `wraps`, when nothing lies that way the search runs again from one whole layout beyond the
+	/// opposite edge.
+	public func neighbor(of pane: PaneID, toward direction: RiftDirection, wraps: Bool = false)
+		-> PaneID?
+	{
+		let rects = unitRects()
+		guard let from = rects[pane] else { return nil }
+		let order = paneIDs
+		func search(_ probe: CGRect) -> PaneID? {
+			var best: (id: PaneID, distance: CGFloat)?
+			for id in order where id != pane {
+				guard let leaf = rects[id] else { continue }
+				let isCandidate =
+					switch direction {
+					case .left: leaf.maxX <= probe.minX
+					case .right: leaf.minX >= probe.maxX
+					case .up: leaf.maxY <= probe.minY
+					case .down: leaf.minY >= probe.maxY
+					}
+				guard isCandidate else { continue }
+				let dx = leaf.minX - probe.minX
+				let dy = leaf.minY - probe.minY
+				let distance = dx * dx + dy * dy
+				if best == nil || distance < best!.distance { best = (id, distance) }
+			}
+			return best?.id
+		}
+		if let found = search(from) { return found }
+		guard wraps else { return nil }
+		let shifted: CGRect =
+			switch direction {
+			case .left: from.offsetBy(dx: 1, dy: 0)
+			case .right: from.offsetBy(dx: -1, dy: 0)
+			case .up: from.offsetBy(dx: 0, dy: 1)
+			case .down: from.offsetBy(dx: 0, dy: -1)
+			}
+		return search(shifted)
+	}
+
+	/// The same as `neighbor(of:toward:wraps:)`; the rect and metrics are not used, because the
+	/// search runs in unit space.
 	public func neighbor(
 		of pane: PaneID,
 		toward direction: RiftDirection,
@@ -78,56 +160,6 @@ extension RiftLayout {
 		metrics: RiftMetrics = RiftMetrics(),
 		wraps: Bool = false
 	) -> PaneID? {
-		let geometry = geometry(in: rect, metrics: metrics)
-		guard let from = geometry.paneFrames[pane] else { return nil }
-		let horizontal = direction == .left || direction == .right
-
-		func overlap(_ frame: CGRect) -> CGFloat {
-			horizontal
-				? min(from.maxY, frame.maxY) - max(from.minY, frame.minY)
-				: min(from.maxX, frame.maxX) - max(from.minX, frame.minX)
-		}
-		func gap(_ frame: CGRect) -> CGFloat {
-			switch direction {
-			case .right: frame.minX - from.maxX
-			case .left: from.minX - frame.maxX
-			case .down: frame.minY - from.maxY
-			case .up: from.minY - frame.maxY
-			}
-		}
-
-		var best: (id: PaneID, gap: CGFloat, overlap: CGFloat)?
-		for id in paneIDs where id != pane {
-			guard let frame = geometry.paneFrames[id] else { continue }
-			let shared = overlap(frame)
-			let distance = gap(frame)
-			guard shared > 0, distance >= -0.5 else { continue }
-			if let current = best {
-				if distance < current.gap - 0.5
-					|| (abs(distance - current.gap) <= 0.5 && shared > current.overlap)
-				{
-					best = (id, distance, shared)
-				}
-			} else {
-				best = (id, distance, shared)
-			}
-		}
-		if let best { return best.id }
-		guard wraps else { return nil }
-
-		// Wrap: the overlapping pane farthest in the opposite direction.
-		var wrapped: (id: PaneID, key: CGFloat)?
-		for id in paneIDs where id != pane {
-			guard let frame = geometry.paneFrames[id], overlap(frame) > 0 else { continue }
-			let key: CGFloat =
-				switch direction {
-				case .right: -frame.minX
-				case .left: frame.maxX
-				case .down: -frame.minY
-				case .up: frame.maxY
-				}
-			if wrapped == nil || key > wrapped!.key { wrapped = (id, key) }
-		}
-		return wrapped?.id
+		neighbor(of: pane, toward: direction, wraps: wraps)
 	}
 }

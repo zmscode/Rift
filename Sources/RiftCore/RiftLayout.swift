@@ -45,7 +45,7 @@ public struct RiftRemoval<PaneID: Hashable & Sendable>: Sendable {
 	public var removed: RiftLayout<PaneID>
 	/// The split that collapsed because one of its children left.
 	public var collapsedSplitID: UUID?
-	/// The pane that sat next to the removed node, a natural place for focus to go.
+	/// Where focus should go: the pane before the removed panes in layout order, else the one after.
 	public var preferredFocus: PaneID?
 }
 
@@ -210,7 +210,25 @@ extension RiftLayout {
 	}
 
 	/// Detaches `node`, collapsing its parent split.
+	///
+	/// `preferredFocus` is the pane just before the removed panes in layout order, or, if there is
+	/// none, the pane just after them.
 	public func removing(_ node: RiftNodeID<PaneID>) -> RiftRemoval<PaneID>? {
+		guard var removal = removingNode(node) else { return nil }
+		let removed = Set(removal.removed.paneIDs)
+		let order = paneIDs
+		if let first = order.firstIndex(where: removed.contains),
+			let last = order.lastIndex(where: removed.contains)
+		{
+			removal.preferredFocus =
+				first > order.startIndex
+				? order[first - 1]
+				: (last + 1 < order.endIndex ? order[last + 1] : nil)
+		}
+		return removal
+	}
+
+	private func removingNode(_ node: RiftNodeID<PaneID>) -> RiftRemoval<PaneID>? {
 		if nodeID == node {
 			return RiftRemoval(
 				remaining: nil, removed: self, collapsedSplitID: nil, preferredFocus: nil)
@@ -232,12 +250,12 @@ extension RiftLayout {
 				preferredFocus: split.first.lastPaneID
 			)
 		}
-		if var removal = split.first.removing(node), let rest = removal.remaining {
+		if var removal = split.first.removingNode(node), let rest = removal.remaining {
 			split.first = rest
 			removal.remaining = .split(split)
 			return removal
 		}
-		if var removal = split.second.removing(node), let rest = removal.remaining {
+		if var removal = split.second.removingNode(node), let rest = removal.remaining {
 			split.second = rest
 			removal.remaining = .split(split)
 			return removal

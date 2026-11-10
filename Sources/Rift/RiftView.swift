@@ -53,6 +53,8 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 		}
 	}
 	private var runningLayoutAnimations = 0
+	private lazy var motion = RiftMotionDriver(view: self)
+	private static var layoutTrack: AnyHashable { "rift.layout" }
 
 	// MARK: Private state
 
@@ -265,7 +267,7 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 	}
 
 	private var shouldAnimate: Bool {
-		configuration.animationDuration > 0
+		configuration.animationStyle.paneCurve != nil
 			&& !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
 			&& window != nil
 	}
@@ -273,7 +275,10 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 	private func placeContainers(animated: Bool, added: Set<PaneID>) {
 		let geometry = displayGeometry()
 		let animate = animated && shouldAnimate
-		var moves: [(RiftPaneContainerView, CGRect)] = []
+		var moves: [(id: PaneID, container: RiftPaneContainerView, from: CGRect, to: CGRect)] = []
+		var popping: [RiftPaneContainerView] = []
+		// A new layout replaces any running layout motion, which continues from where it is now.
+		motion.cancel(Self.layoutTrack, finishing: false)
 		for (id, container) in containers {
 			guard let frame = geometry.paneFrames[id] else {
 				container.isHidden = true
@@ -281,44 +286,64 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 			}
 			container.isHidden = false
 			if animate, added.contains(id) {
-				// New panes fade in where they land.
+				// New panes pop in where they land.
 				container.frame = frame
-				container.alphaValue = 0
+				popping.append(container)
 			}
-			moves.append((container, frame))
+			container.alphaValue = draggingPane.flatMap { containers[$0] } === container ? 0.35 : 1
+			moves.append((id, container, container.frame, frame))
 		}
 		refreshHeaderChrome(geometry.paneFrames)
 		refreshMovementLock()
-		guard animate else {
-			for (container, frame) in moves {
-				container.frame = frame
-				container.alphaValue =
-					draggingPane.flatMap { containers[$0] } === container ? 0.35 : 1
-			}
+		guard animate, let curve = configuration.animationStyle.paneCurve else {
+			for move in moves { move.container.frame = move.to }
 			placeGlass(geometry.paneFrames, animated: false)
 			return
 		}
+		popping.forEach(popIn)
+		let timing = RiftMotionTiming(duration: curve.transitionDuration, curve: curve)
+		let changed = moves.filter { $0.from != $0.to }
 		runningLayoutAnimations += 1
 		structuralActivity.insert(.structuralTransition)
-		NSAnimationContext.runAnimationGroup(
-			{ context in
-				context.duration = configuration.animationDuration
-				context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-				context.allowsImplicitAnimation = true
-				for (container, frame) in moves {
-					container.animator().frame = frame
-					container.animator().alphaValue = 1
+		motion.run(
+			Self.layoutTrack, duration: timing.duration,
+			apply: { [weak self] elapsed in
+				guard let self else { return }
+				let progress = timing.progress(elapsed: elapsed)
+				var frames: [PaneID: CGRect] = [:]
+				for move in moves { frames[move.id] = move.to }
+				for move in changed {
+					let frame = move.from.rift_interpolated(to: move.to, progress: progress)
+					move.container.frame = frame
+					frames[move.id] = frame
 				}
-				placeGlass(geometry.paneFrames, animated: true)
+				self.placeGlass(frames, animated: false)
 			},
-			completionHandler: { [weak self] in
-				MainActor.assumeIsolated {
-					guard let self else { return }
-					self.runningLayoutAnimations = max(0, self.runningLayoutAnimations - 1)
-					if self.runningLayoutAnimations == 0 {
-						self.structuralActivity.remove(.structuralTransition)
-					}
+			completion: { [weak self] in
+				guard let self else { return }
+				self.runningLayoutAnimations = max(0, self.runningLayoutAnimations - 1)
+				if self.runningLayoutAnimations == 0 {
+					self.structuralActivity.remove(.structuralTransition)
 				}
+			})
+	}
+
+	/// Scales a new pane up from the pop-in scale while it fades in.
+	private func popIn(_ container: RiftPaneContainerView) {
+		guard let pop = configuration.panePopIn else { return }
+		container.wantsLayer = true
+		container.alphaValue = 0
+		motion.run(
+			ObjectIdentifier(container), duration: max(pop.entry.duration, pop.fadeIn.duration),
+			apply: { [weak container] elapsed in
+				guard let container else { return }
+				let grow = pop.entry.progress(elapsed: elapsed)
+				container.rift_setPresentationScale(CGFloat(pop.scale + (1 - pop.scale) * grow))
+				container.alphaValue = CGFloat(min(max(pop.fadeIn.progress(elapsed: elapsed), 0), 1))
+			},
+			completion: { [weak container] in
+				container?.rift_setPresentationScale(1)
+				container?.alphaValue = 1
 			})
 	}
 
@@ -387,18 +412,24 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 		return true
 	}
 
+	/// Shrinks a closed pane to the pop-in scale while it fades out, then removes it.
 	private func fadeOutAndRemove(_ container: RiftPaneContainerView) {
-		guard shouldAnimate else {
+		guard shouldAnimate, let pop = configuration.panePopIn else {
 			container.removeFromSuperview()
 			return
 		}
-		NSAnimationContext.runAnimationGroup(
-			{ context in
-				context.duration = configuration.animationDuration * 0.75
-				container.animator().alphaValue = 0
+		container.wantsLayer = true
+		motion.run(
+			ObjectIdentifier(container), duration: max(pop.exit.duration, pop.fadeOut.duration),
+			apply: { [weak container] elapsed in
+				guard let container else { return }
+				let shrink = pop.exit.progress(elapsed: elapsed)
+				container.rift_setPresentationScale(CGFloat(1 - (1 - pop.scale) * shrink))
+				container.alphaValue = CGFloat(1 - min(max(pop.fadeOut.progress(elapsed: elapsed), 0), 1))
 			},
-			completionHandler: {
-				MainActor.assumeIsolated { container.removeFromSuperview() }
+			completion: { [weak container] in
+				container?.removeFromSuperview()
+				container?.rift_setPresentationScale(1)
 			})
 	}
 
@@ -413,8 +444,7 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 	@discardableResult
 	public func moveFocus(_ direction: RiftDirection, wraps: Bool = true) -> Bool {
 		guard zoomedPane == nil, let layout = paneLayout, let current = focusedStorage,
-			let next = layout.neighbor(
-				of: current, toward: direction, in: bounds, metrics: effectiveMetrics, wraps: wraps)
+			let next = layout.neighbor(of: current, toward: direction, wraps: wraps)
 		else { return false }
 		focus(next)
 		return true
@@ -450,8 +480,7 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 	@discardableResult
 	public func swap(_ pane: PaneID? = nil, toward direction: RiftDirection) -> Bool {
 		guard zoomedPane == nil, let id = pane ?? focusedStorage, let layout = paneLayout,
-			let other = layout.neighbor(
-				of: id, toward: direction, in: bounds, metrics: effectiveMetrics),
+			let other = layout.neighbor(of: id, toward: direction),
 			let next = layout.swapping(id, other)
 		else { return false }
 		commit(next, reason: .move, animated: true)

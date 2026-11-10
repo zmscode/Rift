@@ -80,7 +80,7 @@ public struct RiftConfiguration {
 	public var focusBorderColor: NSColor?
 	public var focusBorderWidth: CGFloat = 2
 	/// Alpha applied to the content of panes that don't have focus (1 = no fading).
-	public var inactivePaneAlpha: CGFloat = 1
+	public var inactivePaneAlpha: CGFloat = 0.7
 	public var focusFollowsMouse = false
 
 	// Pane drag and drop
@@ -100,7 +100,16 @@ public struct RiftConfiguration {
 	public var dragPreviewMaxSize = CGSize(width: 280, height: 200)
 
 	// Motion
-	public var animationDuration: TimeInterval = 0.2
+	/// How layout changes move. `.snappy` uses a critically damped spring (about 0.41s);
+	/// `.natural` a spring with a slight overshoot (about 0.54s); `.off` moves panes at once.
+	/// Reduce Motion always behaves like `.off`.
+	public var animationStyle: RiftAnimationStyle = .snappy
+	/// Multiplies the durations of panes appearing and disappearing.
+	public var popInTimeScale: Double = 1
+	/// How panes appear and disappear for the current `animationStyle`, or `nil` when it is `.off`.
+	public var panePopIn: RiftPanePopIn? {
+		animationStyle.paneCurve.map { .standard(entryCurve: $0, timeScale: popInTimeScale) }
+	}
 
 	public init() {}
 }

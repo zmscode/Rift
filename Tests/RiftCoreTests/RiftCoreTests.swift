@@ -48,7 +48,7 @@ private let noMinimums = RiftMetrics(dividerThickness: 0, minimumPaneSize: .zero
 		let layout = threePanes()
 		let removal = layout.removing(.pane("b"))!
 		#expect(removal.remaining?.paneIDs == ["a", "c"])
-		#expect(removal.preferredFocus == "c")
+		#expect(removal.preferredFocus == "a")
 		#expect(removal.collapsedSplitID != nil)
 
 		let lastRemoval = Layout.pane("a").removing(.pane("a"))!
