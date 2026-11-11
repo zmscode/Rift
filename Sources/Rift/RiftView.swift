@@ -21,7 +21,9 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 		set { setFocus(newValue, notify: false, makeFirstResponder: false) }
 	}
 
-	public var configuration: RiftConfiguration { didSet { applyConfiguration() } }
+	public var configuration: RiftConfiguration {
+		didSet { if configuration != oldValue { applyConfiguration() } }
+	}
 	/// Panes can be dragged only between views that share this identifier.
 	public var groupIdentifier = "rift.default"
 
@@ -44,6 +46,8 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 	public var onTearOut: ((PaneID, NSView, CGPoint) -> Void)?
 	/// Called whenever `structuralActivity` changes.
 	public var onStructuralActivityChange: ((RiftStructuralActivity) -> Void)?
+	/// Called when a layout change has finished moving (right away for an unanimated change).
+	public var onLayoutSettled: (() -> Void)?
 
 	/// What is reshaping the panes right now. Pane content can use it to stop scrollers flashing,
 	/// pause expensive redraws, and so on, while anything is set.
@@ -228,7 +232,7 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 
 	/// Builds (when the provider changed) and updates a pane's surface, and sets its content alpha.
 	private func applySurface(to container: RiftPaneContainerView) {
-		let provider = configuration.paneSurface
+		let provider = configuration.paneSurface?.provider
 		if let surfaces = provider as? RiftPaneSurfaces {
 			if container.surfaceSource != surfaces || container.surfaceView == nil {
 				container.setSurfaceView(surfaces.makeSurfaceView())
@@ -383,6 +387,7 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 				// The layout has settled once the last running motion ends.
 				if self.runningLayoutAnimations == 1 {
 					for id in self.containers.keys { self.publishPresentation(for: id, settled: true) }
+					self.onLayoutSettled?()
 				}
 				// Pane content keeps scrollers hidden for 0.15s after the motion settles.
 				DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in

@@ -30,10 +30,32 @@ public protocol RiftPaneSurfaceProviding {
 	@MainActor func contentOpacity(for state: RiftPaneSurfaceState) -> CGFloat?
 }
 
+/// A pane surface provider, comparable so configurations can be compared.
+public struct RiftPaneSurface: Equatable {
+	public let provider: any RiftPaneSurfaceProviding
+	private let identity: AnyHashable
+
+	/// The built-in layered surface.
+	public init(_ surfaces: RiftPaneSurfaces) {
+		provider = surfaces
+		identity = AnyHashable(surfaces)
+	}
+
+	/// Your own provider. Two values are equal when they hold the same object.
+	public init<Provider: RiftPaneSurfaceProviding & AnyObject>(custom provider: Provider) {
+		self.provider = provider
+		identity = AnyHashable(ObjectIdentifier(provider))
+	}
+
+	public static func == (lhs: RiftPaneSurface, rhs: RiftPaneSurface) -> Bool {
+		lhs.identity == rhs.identity
+	}
+}
+
 // MARK: - Built-in surface styles
 
 /// A colour layer.
-public struct RiftSurfaceFill: Equatable, Sendable {
+public struct RiftSurfaceFill: Hashable, Sendable {
 	public var color: NSColor
 	public var blendMode: RiftDividerBlendMode
 
@@ -44,8 +66,8 @@ public struct RiftSurfaceFill: Equatable, Sendable {
 }
 
 /// A glass layer. Liquid glass on macOS 26 and later; a visual-effect material before that.
-public struct RiftSurfaceGlass: Equatable, Sendable {
-	public enum Style: Sendable, Equatable { case regular, clear }
+public struct RiftSurfaceGlass: Hashable, Sendable {
+	public enum Style: Sendable, Hashable { case regular, clear }
 	public var style: Style
 	public var tint: NSColor?
 	/// Material used where liquid glass isn't available.
@@ -62,7 +84,7 @@ public struct RiftSurfaceGlass: Equatable, Sendable {
 }
 
 /// An outline drawn along the surface's edge.
-public struct RiftSurfaceStroke: Equatable, Sendable {
+public struct RiftSurfaceStroke: Hashable, Sendable {
 	public var color: NSColor
 	public var width: CGFloat
 	public var blendMode: RiftDividerBlendMode
@@ -75,7 +97,7 @@ public struct RiftSurfaceStroke: Equatable, Sendable {
 }
 
 /// A drop shadow cast by the surface.
-public struct RiftSurfaceShadow: Equatable, Sendable {
+public struct RiftSurfaceShadow: Hashable, Sendable {
 	public var color: NSColor
 	public var opacity: Float
 	public var radius: CGFloat
@@ -90,7 +112,7 @@ public struct RiftSurfaceShadow: Equatable, Sendable {
 }
 
 /// One surface look, layered back to front: shadows, backdrop, glass, fill, second fill, strokes.
-public struct RiftSurfaceStyle: Equatable, Sendable {
+public struct RiftSurfaceStyle: Hashable, Sendable {
 	public var cornerRadius: CGFloat = 0
 	/// Opacity of the pane's content over this surface.
 	public var contentOpacity: CGFloat = 1
@@ -108,8 +130,8 @@ public struct RiftSurfaceStyle: Equatable, Sendable {
 ///
 /// Each state is a complete style. `RiftPaneSurfaces.modern(_:)` builds them as a cascade: the focused pane starts from the pane style, and inactive-window
 /// styles start from the active-window ones.
-public struct RiftPaneSurfaces: Equatable, Sendable, RiftPaneSurfaceProviding {
-	public struct States: Equatable, Sendable {
+public struct RiftPaneSurfaces: Hashable, Sendable, RiftPaneSurfaceProviding {
+	public struct States: Hashable, Sendable {
 		public var pane: RiftSurfaceStyle
 		public var focusedPane: RiftSurfaceStyle
 		public var inactiveWindowPane: RiftSurfaceStyle

@@ -1,6 +1,6 @@
 # Rift
 
-A split-pane layout component for macOS (AppKit + SwiftUI).
+A split-pane layout component for macOS. Use it from SwiftUI with `RiftLayoutView`: your app owns the layout, focus and zoom through bindings, and each pane is a SwiftUI view. A native AppKit view, `RiftView`, does the layout, motion, dividers and drag and drop underneath, and can also be used on its own.
 
 ## Features
 
@@ -35,7 +35,7 @@ A split-pane layout component for macOS (AppKit + SwiftUI).
     - Optional fading of unfocused panes.
 - **Headless windows:** set `configuration.windowStyle = .headless`.
     - The titlebar and title are hidden, and content runs edge to edge.
-    - The real close, minimise and zoom buttons stay, centred in the top row of pane headers. Rift resizes the titlebar container using public `NSView` calls only, and re-applies the layout whenever AppKit redoes it.
+    - The real close, minimise and zoom buttons stay, centred in the top row of pane headers. Rift sets the window's titlebar height (`customTitlebarHeight` on the frame view) and the button group offset (`standardWindowButtonGroupOffset`), so AppKit lays the buttons out itself. These are private AppKit settings: Rift checks that the window responds to them first and, where it doesn't, resizes the titlebar container with public `NSView` calls instead.
     - Panes under the buttons leave room for them.
     - Pressing a pane header moves the window straight away, with no movement threshold. Double-clicking it performs the system titlebar double-click action: the window's frame view handles it when it can, and otherwise Rift reads the System Settings preference. Panes are then moved with the grip (≡) or by Option-dragging the header (`headerDragBehavior`).
     - While the pointer is over a pane header, and for the whole length of a pane drag, Rift sets the window's `isMovable` to `false`, using a reference-counted lock. Without it, macOS would start its own window drag in the header strip. The lock is recomputed from the pointer's real position, so it can't leak when a drag swallows mouse-exit events. Moving the window from a header waits for real mouse movement, then lifts the lock and calls `performDrag(with:)`.
@@ -45,7 +45,7 @@ A split-pane layout component for macOS (AppKit + SwiftUI).
   - Rift posts `RiftContainerAnimation.willBeginNotification` and `didEndNotification`, with the window as the object. The "will begin" notice carries `contentWidth` and `widthChange` in its `userInfo`.
   - Pane content listens through `RiftContainerAnimationObserver` and either freezes until the end (`.holdContent`) or resizes once, straight to its predicted final size (`.resizeToTarget`). That size is the pane's share of `widthChange`, in proportion to its share of `contentWidth`.
   - An observer gives up by itself if no end notice arrives within 2 seconds.
-    - The `RiftView` listens for its own notices too. When an animation begins, it lays the panes out once at the size the view will end up, and holds each pane's content at that size, clipped, until the end notice arrives. Content therefore reflows once instead of on every frame.
+    - The `RiftView` listens for its own notices too. When an animation begins, it holds each pane's content at the larger of its current size and its final size, clipped to the pane, until the last end notice arrives. Content therefore reflows once instead of on every frame, and never leaves a gap. Animations that overlap (a fold reversed halfway) are counted, so the content is only released when all of them have ended.
 - **Structural activity:** `structuralActivity` and `onStructuralActivityChange` report what is reshaping the panes right now: an animated layout change, a divider drag, a live window resize or a pane drag. Pane content can use this to stop scrollers flashing or to pause redraws.
 - **Pane surfaces:** Rift draws no pane background itself. Set `configuration.paneSurface` to draw one behind each pane's content.
   - `RiftPaneSurfaces.modern(.comfortable)` gives glass cards: 10pt corners, a tinted glass layer (liquid glass on macOS 26 and later, a visual-effect material before), a light fill, and in dark mode an overlay backdrop. `.modern(.compact)` gives plain touching panes.
@@ -90,13 +90,30 @@ the command methods do.
 
 ```swift
 @State var layout: RiftLayout<String>? = .pane("a")
+@State var focused: String?
+@State var zoomed: String?
 let controller = RiftController<String>()
 
-RiftLayoutView(layout: $layout, controller: controller) { id in
-    Text(id)
+RiftLayoutView(
+    layout: $layout, focusedPane: $focused, zoomedPane: $zoomed,
+    configuration: .comfortable, controller: controller,
+    onLayoutSettled: { print("settled") }
+) { pane in
+    MyPane(id: pane.paneID)
+        .opacity(pane.isFocused ? 1 : 0.9)
+        .redacted(reason: pane.presentation.isLayoutSettled ? [] : .placeholder)
 }
 // controller.split(edge: .bottom, newPane: "b")
 ```
+
+Each pane's content gets a `RiftPaneContext`: its ID, whether it is focused, its accessibility label,
+and its `presentation` (whether the layout has settled, the zoom, its content and target sizes). The
+content updates when any of these change. Rift writes every change the user makes (drags, drops,
+closes, focus, zoom) back through the bindings. `onTearOut` hands you a pane dropped outside every
+window, already removed, to open somewhere else.
+
+Hosting views ignore the window's safe area, so content runs under a headless titlebar; leave room for
+the window buttons yourself if a pane needs it.
 
 ### Making a custom handle draggable
 
@@ -112,7 +129,7 @@ swift test
 swift run RiftDemo
 ```
 
-The demo window has a controls sidebar on the right. It has buttons for splitting, closing, focus, swap,
+The demo is a SwiftUI app built on `RiftLayoutView`. Its window has a controls sidebar on the right. It has buttons for splitting, closing, focus, swap,
 resize, balance and zoom, plus switches for motion style, the focus border transition, fading, scroller
 suppression, centre drops, pane surfaces, the headless window and headers. A status line shows the focused pane
 and what is reshaping the panes. Drag panes by their top-left corner, and drag dividers, with the mouse.

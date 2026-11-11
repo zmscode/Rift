@@ -39,7 +39,7 @@ public enum RiftHeaderDragBehavior: Sendable, Equatable {
 }
 
 /// Appearance and behaviour of a `RiftView`.
-public struct RiftConfiguration {
+public struct RiftConfiguration: Equatable {
 	// Window
 	public var windowStyle: RiftWindowStyle = .standard
 	public var headerDragBehavior: RiftHeaderDragBehavior = .automatic
@@ -53,7 +53,7 @@ public struct RiftConfiguration {
 	/// What is drawn behind each pane's content (background, glass, fills, strokes), and how
 	/// opaque the content is per state. `nil` (the default) draws nothing; content draws its own
 	/// background. Use `RiftPaneSurfaces.modern(_:)` or your own `RiftPaneSurfaceProviding`.
-	public var paneSurface: (any RiftPaneSurfaceProviding)?
+	public var paneSurface: RiftPaneSurface?
 
 	public var metrics = RiftMetrics()
 	public var snap = RiftSnapConfiguration()
@@ -178,7 +178,7 @@ extension RiftConfiguration {
 		configuration.dividerColor = .clear
 		configuration.paneCornerRadius = 10
 		configuration.dropIndicatorCornerRadius = 8
-		configuration.paneSurface = RiftPaneSurfaces.modern(.comfortable)
+		configuration.paneSurface = RiftPaneSurface(.modern(.comfortable))
 		return configuration
 	}
 
@@ -190,7 +190,7 @@ extension RiftConfiguration {
 		configuration.dividerColor = NSColor.separatorColor.withAlphaComponent(0.7)
 		configuration.paneCornerRadius = 0
 		configuration.dropIndicatorCornerRadius = 0
-		configuration.paneSurface = RiftPaneSurfaces.modern(.compact)
+		configuration.paneSurface = RiftPaneSurface(.modern(.compact))
 		return configuration
 	}
 }
