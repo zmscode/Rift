@@ -98,7 +98,7 @@ A split-pane layout component for macOS. Use it from SwiftUI with `RiftLayoutVie
 | ---------- | ------------------------------------------------------------------------------------------------------------ |
 | `RiftCore` | Layout tree, geometry, divider-drag maths, drop zones, arrangement. Pure Swift and fully unit-tested.        |
 | `Rift`     | `RiftView` (AppKit), the pane drag session, and the SwiftUI wrapper `RiftLayoutView`. Re-exports `RiftCore`. |
-| `RiftDemo` | Rift Workbench: a sidebar, tabs that each hold a split layout of small tools, and settings for every feature. |
+| `RiftDemo` | Rift Files: a Finder-style browser with places, tabs of split layouts, and settings for every feature. |
 
 ## Usage
 
@@ -190,16 +190,17 @@ swift test
 swift run RiftDemo
 ```
 
-The demo is **Rift Workbench**, a SwiftUI app built on `RiftSidebarSplitView` and `RiftLayoutView`.
+The demo is **Rift Files**, a small Finder-style file browser built on `RiftSidebarSplitView`, `RiftTabBar` and `RiftLayoutView`. It only reads: it lists folders and previews files, and opens a file in its own app when you double-click it.
 
-- The **navigator** sidebar lists the open panes (click to focus; right-click to close or close the others), adds tools beside the focused pane, and holds the settings: card, tile or plain looks; motion style; pop-in or edge-growth panes; border transition, colour swatches and gradient; what unfocused panes lose; content sizing while moving; balancing; asking before closing busy panes; and the sidebar's side, swipe and window-width behaviour. Fold it with its toggle, a sideways swipe, or ⌥⌘S.
-- Each pane is a **tool** that shows a feature at work:
-    - **Notes:** a text editor (focus and unfocused fading).
-    - **Inspector:** the pane's live presentation (settled, zoom fraction, content, target and surface sizes, what is reshaping).
-    - **Log:** a growing log in an `NSScrollView` that hides its own scroller while the layout moves (`RiftScrollerSuppressing`).
-    - **Orbit:** an animation that pauses while the layout moves.
-    - **Clock:** a clock that grows with the zoom fraction.
-- Log and Orbit count as busy, so closing them shows the confirmation card. Dragged panes show a small card under the pointer; dropping one outside the window opens it in a new one.
+- The **sidebar** has Favourites (home, Desktop, Documents, Downloads, Applications) and Locations; click one to open it in the tab's browser, or ⌘-click for a new tab. Below them: the panes in this tab (click to focus; right-click to close or close the others), buttons that add a pane beside the focused one, and **View Options**: theme; card, tile or plain looks; motion; pop-in or edge-growth panes; border transition, colours and gradient; what unfocused panes lose; content sizing while moving; balancing; asking before closing busy panes; and the sidebar's side, swipe and window-width behaviour. Its title row holds New Tab, Split, Zoom and Balance. Fold it with its toggle, a sideways swipe or ⌥⌘S.
+- **Tabs** each hold their own layout and are named after their browser's folder. Drag to reorder, click the selected tab to rename it, right-click for its menu, drag one out of the window to give it its own window, or drop a pane on the bar to make it a tab (hover a tab to open it first).
+- Each **pane** shows a feature at work:
+    - **Browser:** a folder as a sortable table, with back, forward and enclosing-folder buttons in its title row (which lines up with the window buttons). Double-click to open; right-click to open a folder in a new tab, show it in Finder or copy its path.
+    - **Preview:** Quick Look of the tab's selection.
+    - **Info:** the selection's details, and the pane's live presentation from Rift (settled, zoom fraction, content and target sizes, what is reshaping).
+    - **Sizes:** measures each item in the tab's folder. It is busy while it counts, so closing it (or its tab) asks first.
+    - **Activity:** everything that happens, in an `NSScrollView` that hides its scroller while the layout moves (`RiftScrollerSuppressing`).
+- Dragged panes show a small card under the pointer; dropping one outside the window opens it in a new one. macOS may ask for access the first time you open Desktop, Documents or Downloads.
 
 | Shortcut         | Action                    |
 | ---------------- | ------------------------- |
@@ -212,3 +213,6 @@ The demo is **Rift Workbench**, a SwiftUI app built on `RiftSidebarSplitView` an
 | ⌃⌘ arrows        | Swap with a neighbour     |
 | ⌥⌘S              | Fold or unfold the sidebar |
 | ⌘N               | New window                |
+| ⌘T / ⇧⌘W         | New tab / close tab       |
+| ⇧⌘] / ⇧⌘[        | Next / previous tab       |
+| ⌘[ / ⌘] / ⌘↑     | Back / forward / enclosing folder |

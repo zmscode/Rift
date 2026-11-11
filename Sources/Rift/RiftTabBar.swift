@@ -165,16 +165,24 @@ public final class RiftTabBarView<ID: Hashable>: NSView, RiftPaneDropAccepting {
 
 	// MARK: Options
 
-	public var density: RiftChromeDensity = .comfortable { didSet { restyle() } }
+	public var density: RiftChromeDensity = .comfortable {
+		didSet { if density != oldValue { restyle(); invalidateIntrinsicContentSize() } }
+	}
 	/// Tabs share all the width instead of stopping at 240pt.
-	public var fillsAvailableSpace = false { didSet { needsLayout = true } }
-	public var showsNewTabButton = true { didSet { needsLayout = true } }
+	public var fillsAvailableSpace = false {
+		didSet { if fillsAvailableSpace != oldValue { needsLayout = true } }
+	}
+	public var showsNewTabButton = true {
+		didSet { if showsNewTabButton != oldValue { needsLayout = true } }
+	}
 	/// Room at the leading edge (for the window buttons).
-	public var leadingInset: CGFloat = 0 { didSet { needsLayout = true } }
-	public var trailingInset: CGFloat = 0 { didSet { needsLayout = true } }
-	public var surfaces: RiftTabSurfaces = .modern(.comfortable) { didSet { restyle() } }
+	public var leadingInset: CGFloat = 0 { didSet { if leadingInset != oldValue { needsLayout = true } } }
+	public var trailingInset: CGFloat = 0 { didSet { if trailingInset != oldValue { needsLayout = true } } }
+	public var surfaces: RiftTabSurfaces = .modern(.comfortable) {
+		didSet { if surfaces != oldValue { restyle() } }
+	}
 	/// Takes the surfaces' tints and the text colours from a theme.
-	public var theme: RiftThemeSelection? { didSet { restyle() } }
+	public var theme: RiftThemeSelection? { didSet { if theme != oldValue { restyle() } } }
 	/// Views that can trade panes with this bar (see `RiftConfiguration.dragGroup`).
 	public var paneDropGroup: String?
 
@@ -427,7 +435,6 @@ public final class RiftTabBarView<ID: Hashable>: NSView, RiftPaneDropAccepting {
 		for view in itemViews.values {
 			view.applyLooks(hover: looks.hover, density: density, textColor: textColor)
 		}
-		invalidateIntrinsicContentSize()
 		needsLayout = true
 	}
 

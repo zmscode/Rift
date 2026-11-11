@@ -1,102 +1,29 @@
 import Rift
 import SwiftUI
 
-/// The workbench's sidebar: the open panes, new tools, and the settings that shape the layout.
+/// The sidebar: places, the panes in this tab, new panes, and the view options that shape the
+/// layout.
 struct Navigator: View {
 	@Environment(\.riftSidebarTitleRowHeight) private var titleRowHeight
-	let layout: RiftLayout<String>?
+	let tab: FilesTab?
 	@Binding var focused: String?
-	let zoomed: String?
-	@Binding var settings: WorkbenchSettings
+	@Binding var settings: FilesSettings
 	let activity: RiftStructuralActivity
-	let foldProgress: CGFloat
-	let actions: WorkbenchActions
+	let actions: FilesActions
+	@State private var openOptions: Set<String> = ["Look"]
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: 0) {
-			Text("Workbench").font(.system(size: 15, weight: .bold))
-				.padding(.horizontal, 14).padding(.top, titleRowHeight + 2).padding(.bottom, 8)
+			Color.clear.frame(height: titleRowHeight)
 			ScrollView {
 				VStack(alignment: .leading, spacing: 14) {
-					openPanes
-					newTools
-					group("Theme") {
-						Picker("", selection: $settings.themeID) {
-							Text("Automatic").tag("auto")
-							Divider()
-							ForEach(RiftTheme.builtIn) { theme in
-								Text("\(theme.name) (\(theme.appearance.rawValue))").tag(theme.id)
-							}
-						}
-						.pickerStyle(.menu)
-						.labelsHidden()
-						themeStrip
-					}
-					group("Look") {
-						segmented($settings.look, WorkbenchSettings.Look.allCases) { $0.rawValue }
-						labelled("Motion") {
-							segmented($settings.motion, [.snappy, .natural, .off]) {
-								$0.rawValue.capitalized
-							}
-						}
-						labelled("New panes") {
-							segmented($settings.transition, [.popIn, .edgeGrowth]) {
-								$0 == .popIn ? "Pop in" : "Grow"
-							}
-						}
-					}
-					group("Focus") {
-						labelled("Border") {
-							segmented($settings.border, [.glide, .crossfade, .off]) {
-								$0.rawValue.capitalized
-							}
-						}
-						swatches
-						check("Gradient border", $settings.gradientBorder)
-						labelled("Unfocused panes lose") {
-							segmented($settings.unfocusedFade, [.none, .styling, .text, .both]) {
-								switch $0 {
-								case .none: "–"
-								case .styling: "Surface"
-								case .text: "Content"
-								case .both: "Both"
-								}
-							}
-						}
-					}
-					group("Layout") {
-						labelled("Content while moving") {
-							segmented(
-								$settings.contentSizing, [.followsSurface, .pinnedDuringMotion]
-							) {
-								$0 == .followsSurface ? "Follow" : "Hold"
-							}
-						}
-						check("Balance on split and close", $settings.autoBalance)
-						check("Ask before closing busy panes", $settings.asksBeforeClosingBusyPanes)
-						FlowButtons {
-							Button("Balance", action: actions.balance)
-							Button(zoomed == nil ? "Zoom" : "Unzoom", action: actions.zoom)
-							Button("Close others") { actions.closeOthers(nil) }
-						}
-					}
-					group("Sidebar") {
-						segmented($settings.sidebarPosition, [.left, .right]) {
-							$0.rawValue.capitalized
-						}
-						labelled("Swipe to fold") {
-							segmented($settings.swipe, [.swipe, .optionSwipe, .off]) {
-								switch $0 {
-								case .swipe: "Swipe"
-								case .optionSwipe: "⌥ Swipe"
-								case .off: "Off"
-								}
-							}
-						}
-						check("Keep window width when folding", $settings.keepsWindowWidth)
-					}
+					places("Favourites", Files.favourites)
+					places("Locations", Files.locations)
+					panes
+					addPane
+					viewOptions
 				}
-				.padding(.horizontal, 14)
+				.padding(.horizontal, 10)
 				.padding(.bottom, 12)
 			}
 			status
@@ -109,31 +36,39 @@ struct Navigator: View {
 
 	// MARK: Sections
 
-	private var openPanes: some View {
-		group("Open") {
+	private var currentFolder: URL? { tab?.browser.map { Files.shared.folder(of: $0) } }
+
+	private func places(_ title: String, _ places: [Files.Place]) -> some View {
+		group(title) {
 			VStack(spacing: 1) {
-				ForEach(layout?.paneIDs ?? [], id: \.self) { id in
-					let kind = PaneIDs.kind(of: id)
-					Button {
-						focused = id
-					} label: {
-						HStack(spacing: 8) {
-							Image(systemName: kind.symbol).foregroundStyle(kind.tint).frame(
-								width: 16)
-							Text(PaneIDs.title(of: id))
-							Spacer()
-							if zoomed == id {
-								Image(systemName: "arrow.up.left.and.arrow.down.right")
-							}
-						}
-						.padding(.horizontal, 8).padding(.vertical, 5)
-						.background(
-							RoundedRectangle(cornerRadius: 6)
-								.fill(focused == id ? kind.tint.opacity(0.3) : .clear)
-						)
-						.contentShape(Rectangle())
+				ForEach(places) { place in
+					row(
+						symbol: place.symbol, tint: .accentColor, title: place.name,
+						isSelected: currentFolder == place.url
+					) {
+						// ⌘-click opens the place in a new tab, as in Finder.
+						actions.openPlace(place.url, NSEvent.modifierFlags.contains(.command))
 					}
-					.buttonStyle(.plain)
+					.contextMenu {
+						Button("Open") { actions.openPlace(place.url, false) }
+						Button("Open in New Tab") { actions.openPlace(place.url, true) }
+					}
+				}
+			}
+		}
+	}
+
+	private var panes: some View {
+		group("This Tab") {
+			VStack(spacing: 1) {
+				ForEach(tab?.layout?.paneIDs ?? [], id: \.self) { id in
+					let kind = PaneIDs.kind(of: id)
+					row(
+						symbol: kind.symbol, tint: kind.tint, title: PaneIDs.title(of: id),
+						isSelected: focused == id,
+						badge: tab?.zoomed == id ? "arrow.up.left.and.arrow.down.right"
+							: Files.shared.measuring.contains(id) ? "hourglass" : nil
+					) { focused = id }
 					.contextMenu {
 						Button("Focus") { focused = id }
 						Button("Close") { actions.closePane(id) }
@@ -141,6 +76,154 @@ struct Navigator: View {
 					}
 				}
 			}
+		}
+	}
+
+	private var addPane: some View {
+		group("Add Beside the Focused Pane") {
+			LazyVGrid(columns: [GridItem(.adaptive(minimum: 60), spacing: 6)], spacing: 6) {
+				ForEach(PaneKind.allCases) { kind in
+					Button {
+						actions.split(.right, kind)
+					} label: {
+						VStack(spacing: 3) {
+							Image(systemName: kind.symbol).font(.system(size: 14))
+								.foregroundStyle(kind.tint)
+							Text(kind.title).font(.system(size: 10))
+						}
+						.frame(maxWidth: .infinity, minHeight: 40)
+						.background(RoundedRectangle(cornerRadius: 8).fill(.quaternary.opacity(0.5)))
+						.contentShape(Rectangle())
+					}
+					.buttonStyle(.plain)
+					.help(kind.blurb)
+				}
+			}
+		}
+	}
+
+	private var viewOptions: some View {
+		group("View Options") {
+			option("Theme") {
+				Picker("", selection: $settings.themeID) {
+					Text("Automatic").tag("auto")
+					Divider()
+					ForEach(RiftTheme.builtIn) { theme in
+						Text("\(theme.name) (\(theme.appearance.rawValue))").tag(theme.id)
+					}
+				}
+				.pickerStyle(.menu)
+				.labelsHidden()
+				themeStrip
+			}
+			option("Look") {
+				segmented($settings.look, FilesSettings.Look.allCases) { $0.rawValue }
+				labelled("Motion") {
+					segmented($settings.motion, [.snappy, .natural, .off]) { $0.rawValue.capitalized }
+				}
+				labelled("New panes") {
+					segmented($settings.transition, [.popIn, .edgeGrowth]) {
+						$0 == .popIn ? "Pop in" : "Grow"
+					}
+				}
+			}
+			option("Focus") {
+				labelled("Border") {
+					segmented($settings.border, [.glide, .crossfade, .off]) { $0.rawValue.capitalized }
+				}
+				swatches
+				check("Gradient border", $settings.gradientBorder)
+				labelled("Unfocused panes lose") {
+					segmented($settings.unfocusedFade, [.none, .styling, .text, .both]) {
+						switch $0 {
+						case .none: "–"
+						case .styling: "Surface"
+						case .text: "Content"
+						case .both: "Both"
+						}
+					}
+				}
+			}
+			option("Layout") {
+				labelled("Content while moving") {
+					segmented($settings.contentSizing, [.followsSurface, .pinnedDuringMotion]) {
+						$0 == .followsSurface ? "Follow" : "Hold"
+					}
+				}
+				check("Balance on split and close", $settings.autoBalance)
+				check("Ask before closing busy panes", $settings.asksBeforeClosingBusyPanes)
+				FlowButtons {
+					Button("Balance", action: actions.balance)
+					Button(tab?.zoomed == nil ? "Zoom" : "Unzoom", action: actions.zoom)
+					Button("Close others") { actions.closeOthers(nil) }
+				}
+			}
+			option("Sidebar") {
+				segmented($settings.sidebarPosition, [.left, .right]) { $0.rawValue.capitalized }
+				labelled("Swipe to fold") {
+					segmented($settings.swipe, [.swipe, .optionSwipe, .off]) {
+						switch $0 {
+						case .swipe: "Swipe"
+						case .optionSwipe: "⌥ Swipe"
+						case .off: "Off"
+						}
+					}
+				}
+				check("Keep window width when folding", $settings.keepsWindowWidth)
+			}
+		}
+	}
+
+	private var status: some View {
+		let reshaping: [String] = [
+			activity.contains(.structuralTransition) ? "motion" : nil,
+			activity.contains(.dividerDrag) ? "divider" : nil,
+			activity.contains(.paneDrag) ? "drag" : nil,
+			activity.contains(.windowLiveResize) ? "resize" : nil,
+		].compactMap { $0 }
+		return VStack(alignment: .leading, spacing: 2) {
+			Text("Moving \(reshaping.isEmpty ? "–" : reshaping.joined(separator: ", "))")
+			Text("⌘T tab · ⌘D split · ⌘[ back · ⌥⌘S sidebar").foregroundStyle(.tertiary)
+		}
+		.font(.system(size: 10, design: .monospaced))
+		.foregroundStyle(.secondary)
+		.padding(14)
+	}
+
+	// MARK: Rows
+
+	private func row(
+		symbol: String, tint: Color, title: String, isSelected: Bool, badge: String? = nil,
+		action: @escaping () -> Void
+	) -> some View {
+		Button(action: action) {
+			HStack(spacing: 8) {
+				Image(systemName: symbol).foregroundStyle(tint).frame(width: 16)
+				Text(title).lineLimit(1)
+				Spacer(minLength: 0)
+				if let badge { Image(systemName: badge).foregroundStyle(.secondary) }
+			}
+			.font(.system(size: 12))
+			.padding(.horizontal, 8).padding(.vertical, 4)
+			.background(
+				RoundedRectangle(cornerRadius: 6).fill(isSelected ? tint.opacity(0.25) : .clear))
+			.contentShape(Rectangle())
+		}
+		.buttonStyle(.plain)
+	}
+
+	/// One collapsible group of options.
+	private func option<Content: View>(_ title: String, @ViewBuilder _ content: @escaping () -> Content)
+		-> some View
+	{
+		DisclosureGroup(
+			isExpanded: Binding(
+				get: { openOptions.contains(title) },
+				set: { if $0 { openOptions.insert(title) } else { openOptions.remove(title) } })
+		) {
+			VStack(alignment: .leading, spacing: 6) { content() }.padding(.top, 4)
+		} label: {
+			Text(title).font(.system(size: 12, weight: .medium))
 		}
 	}
 
@@ -178,48 +261,6 @@ struct Navigator: View {
 			}
 		}
 		.padding(.vertical, 3)
-	}
-
-	private var newTools: some View {
-		group("New beside the focused pane") {
-			LazyVGrid(columns: [GridItem(.adaptive(minimum: 64), spacing: 6)], spacing: 6) {
-				ForEach(ToolKind.allCases) { kind in
-					Button {
-						actions.split(.right, kind)
-					} label: {
-						VStack(spacing: 3) {
-							Image(systemName: kind.symbol).font(.system(size: 15))
-								.foregroundStyle(kind.tint)
-							Text(kind.title).font(.system(size: 10))
-						}
-						.frame(maxWidth: .infinity, minHeight: 44)
-						.background(
-							RoundedRectangle(cornerRadius: 8).fill(.quaternary.opacity(0.5))
-						)
-						.contentShape(Rectangle())
-					}
-					.buttonStyle(.plain)
-				}
-			}
-		}
-	}
-
-	private var status: some View {
-		let reshaping: [String] = [
-			activity.contains(.structuralTransition) ? "motion" : nil,
-			activity.contains(.dividerDrag) ? "divider" : nil,
-			activity.contains(.paneDrag) ? "drag" : nil,
-			activity.contains(.windowLiveResize) ? "resize" : nil,
-		].compactMap { $0 }
-		return VStack(alignment: .leading, spacing: 2) {
-			Text("Focus  \(focused.map(PaneIDs.title(of:)) ?? "–")")
-			Text("Moving \(reshaping.isEmpty ? "–" : reshaping.joined(separator: ", "))")
-			Text("⌘D split · ⌥⌘S sidebar · ⇧⌘↩ zoom")
-				.foregroundStyle(.tertiary)
-		}
-		.font(.system(size: 10, design: .monospaced))
-		.foregroundStyle(.secondary)
-		.padding(14)
 	}
 
 	// MARK: Helpers
