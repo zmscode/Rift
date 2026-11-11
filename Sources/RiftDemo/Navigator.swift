@@ -77,16 +77,27 @@ struct Navigator: View {
 
 	private var panes: some View {
 		group("This Tab") {
+			if let tab {
+				RiftPaneMinimap(
+					layout: tab.layout, floating: tab.floating, highlighted: focused, width: 120
+				) { focused = $0 }
+				.padding(.bottom, 4)
+			}
 			VStack(spacing: 1) {
-				ForEach((tab?.layout?.paneIDs ?? []) + (tab?.floating.flatMap(\.layout.paneIDs) ?? []), id: \.self) { id in
+				ForEach(
+					(tab?.layout?.paneIDs ?? []) + (tab?.floating.flatMap(\.layout.paneIDs) ?? []),
+					id: \.self
+				) { id in
 					let kind = PaneIDs.kind(of: id)
 					row(
 						symbol: kind.symbol, tint: kind.tint, title: PaneIDs.title(of: id),
 						isSelected: focused == id,
-						badge: tab?.zoomed == id ? "arrow.up.left.and.arrow.down.right"
-							: Files.shared.measuring.contains(id) ? "hourglass"
-							: (tab?.floating.contains { $0.layout.contains(id) } ?? false)
-								? "macwindow.on.rectangle" : nil
+						badge: tab?.zoomed == id
+							? "arrow.up.left.and.arrow.down.right"
+							: Files.shared.measuring.contains(id)
+								? "hourglass"
+								: (tab?.floating.contains { $0.layout.contains(id) } ?? false)
+									? "macwindow.on.rectangle" : nil
 					) { focused = id }
 					.contextMenu {
 						Button("Focus") { focused = id }
@@ -111,7 +122,9 @@ struct Navigator: View {
 							Text(kind.title).font(.system(size: 10))
 						}
 						.frame(maxWidth: .infinity, minHeight: 40)
-						.background(RoundedRectangle(cornerRadius: 8).fill(.quaternary.opacity(0.5)))
+						.background(
+							RoundedRectangle(cornerRadius: 8).fill(.quaternary.opacity(0.5))
+						)
 						.contentShape(Rectangle())
 					}
 					.buttonStyle(.plain)
@@ -127,7 +140,7 @@ struct Navigator: View {
 				Picker("", selection: $settings.themeID) {
 					Text("Automatic").tag("auto")
 					Divider()
-					ForEach(RiftTheme.builtIn) { theme in
+					ForEach(FilesThemes.all) { theme in
 						Text("\(theme.name) (\(theme.appearance.rawValue))").tag(theme.id)
 					}
 				}
@@ -138,7 +151,9 @@ struct Navigator: View {
 			option("Look") {
 				segmented($settings.look, FilesSettings.Look.allCases) { $0.rawValue }
 				labelled("Motion") {
-					segmented($settings.motion, [.snappy, .natural, .off]) { $0.rawValue.capitalized }
+					segmented($settings.motion, [.snappy, .natural, .off]) {
+						$0.rawValue.capitalized
+					}
 				}
 				labelled("New panes") {
 					segmented($settings.transition, [.popIn, .edgeGrowth]) {
@@ -148,7 +163,9 @@ struct Navigator: View {
 			}
 			option("Focus") {
 				labelled("Border") {
-					segmented($settings.border, [.glide, .crossfade, .off]) { $0.rawValue.capitalized }
+					segmented($settings.border, [.glide, .crossfade, .off]) {
+						$0.rawValue.capitalized
+					}
 				}
 				swatches
 				check("Gradient border", $settings.gradientBorder)
@@ -177,8 +194,22 @@ struct Navigator: View {
 					Button("Close others") { actions.closeOthers(nil) }
 				}
 			}
+			option("Panes") {
+				labelled("Headers") {
+					segmented($settings.paneHeaders, FilesSettings.PaneHeaders.allCases) {
+						$0.rawValue
+					}
+				}
+				Text(
+					"Bars show actions; click a focused title to rename it. Right-click a header or the top strip for the pane menu. ⌥⌘F floats a pane; ⌘P goes to a pane."
+				)
+				.font(.system(size: 10)).foregroundStyle(.secondary)
+				.fixedSize(horizontal: false, vertical: true)
+			}
 			option("Tabs") {
-				segmented($settings.tabPlacement, FilesSettings.TabPlacement.allCases) { $0.rawValue }
+				segmented($settings.tabPlacement, FilesSettings.TabPlacement.allCases) {
+					$0.rawValue
+				}
 				labelled("Sidebar text") {
 					segmented($settings.sidebarTextSize, RiftSidebarTextSize.allCases) {
 						$0.rawValue.capitalized
@@ -233,14 +264,17 @@ struct Navigator: View {
 			.font(.system(size: 12))
 			.padding(.horizontal, 8).padding(.vertical, 4)
 			.background(
-				RoundedRectangle(cornerRadius: 6).fill(isSelected ? tint.opacity(0.25) : .clear))
+				RoundedRectangle(cornerRadius: 6).fill(isSelected ? tint.opacity(0.25) : .clear)
+			)
 			.contentShape(Rectangle())
 		}
 		.buttonStyle(.plain)
 	}
 
 	/// One collapsible group of options.
-	private func option<Content: View>(_ title: String, @ViewBuilder _ content: @escaping () -> Content)
+	private func option<Content: View>(
+		_ title: String, @ViewBuilder _ content: @escaping () -> Content
+	)
 		-> some View
 	{
 		DisclosureGroup(
@@ -259,10 +293,14 @@ struct Navigator: View {
 		RiftThemeReader { theme in
 			HStack(spacing: 2) {
 				ForEach(
-					[RiftColorRole.canvas, .surfaceRaised, .content, .accent, .danger, .success, .warning,
-					 .info], id: \.self
+					[
+						RiftColorRole.canvas, .surfaceRaised, .content, .accent, .danger, .success,
+						.warning,
+						.info,
+					], id: \.self
 				) { role in
-					RoundedRectangle(cornerRadius: 2).fill(Color(rift: theme[role])).frame(height: 10)
+					RoundedRectangle(cornerRadius: 2).fill(Color(rift: theme[role])).frame(
+						height: 10)
 				}
 			}
 		}
@@ -271,7 +309,9 @@ struct Navigator: View {
 	/// The named border colours, as swatches.
 	private var swatches: some View {
 		let palette = RiftColorPalette(theme: settings.theme)
-		return LazyVGrid(columns: [GridItem(.adaptive(minimum: 16, maximum: 16), spacing: 6)], spacing: 6) {
+		return LazyVGrid(
+			columns: [GridItem(.adaptive(minimum: 16, maximum: 16), spacing: 6)], spacing: 6
+		) {
 			ForEach(RiftFocusBorderColor.allCases, id: \.self) { name in
 				Button {
 					settings.borderColor = name
@@ -280,7 +320,9 @@ struct Navigator: View {
 						.overlay(
 							Circle()
 								.strokeBorder(
-									.primary.opacity(settings.borderColor == name ? 0.9 : 0), lineWidth: 2)
+									.primary.opacity(settings.borderColor == name ? 0.9 : 0),
+									lineWidth: 2
+								)
 								.padding(-3))
 				}
 				.buttonStyle(.plain)

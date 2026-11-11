@@ -30,6 +30,8 @@ struct FilesPane: View {
 	let tab: Int
 	let isTranslucent: Bool
 	let activity: RiftStructuralActivity
+	/// Draws its own title row (with header bars Rift draws the title).
+	var drawsTitle = true
 
 	@Environment(\.riftThemeSelection) private var themeSelection
 	@Environment(\.colorScheme) private var colorScheme
@@ -37,24 +39,26 @@ struct FilesPane: View {
 
 	var body: some View {
 		VStack(spacing: 0) {
-			HStack(spacing: 6) {
-				if kind == .browser { BrowserNavigation(pane: pane.paneID) }
-				Spacer(minLength: 0)
-				Image(systemName: kind.symbol).foregroundStyle(kind.tint)
-				Text(PaneIDs.title(of: pane.paneID)).fontWeight(.semibold)
-				if !pane.presentation.isLayoutSettled {
-					Text("moving").font(.system(size: 9, weight: .bold)).textCase(.uppercase)
-						.padding(.horizontal, 5).padding(.vertical, 1)
-						.background(Capsule().fill(kind.tint.opacity(0.35)))
+			if drawsTitle {
+				HStack(spacing: 6) {
+					if kind == .browser { BrowserNavigation(pane: pane.paneID) }
+					Spacer(minLength: 0)
+					Image(systemName: kind.symbol).foregroundStyle(kind.tint)
+					Text(PaneIDs.title(of: pane.paneID)).fontWeight(.semibold)
+					if !pane.presentation.isLayoutSettled {
+						Text("moving").font(.system(size: 9, weight: .bold)).textCase(.uppercase)
+							.padding(.horizontal, 5).padding(.vertical, 1)
+							.background(Capsule().fill(kind.tint.opacity(0.35)))
+					}
+					Spacer(minLength: 0)
+					if kind == .browser { BrowserNavigation(pane: pane.paneID).hidden() }
 				}
-				Spacer(minLength: 0)
-				if kind == .browser { BrowserNavigation(pane: pane.paneID).hidden() }
+				.font(.system(size: 12))
+				.lineLimit(1)
+				.frame(height: max(pane.presentation.titleRowHeight ?? 30, 30))
+				.padding(.leading, max(pane.presentation.titleLeadingInset, 10))
+				.padding(.trailing, max(pane.presentation.titleTrailingInset, 10))
 			}
-			.font(.system(size: 12))
-			.lineLimit(1)
-			.frame(height: max(pane.presentation.titleRowHeight ?? 30, 30))
-			.padding(.leading, max(pane.presentation.titleLeadingInset, 10))
-			.padding(.trailing, max(pane.presentation.titleTrailingInset, 10))
 			content.frame(maxWidth: .infinity, maxHeight: .infinity)
 		}
 		.foregroundStyle(themeColor(.content))
@@ -122,13 +126,18 @@ struct BrowserNavigation: View {
 			button("chevron.right", "Forward", enabled: files.canGoForward(pane)) {
 				files.goForward(pane)
 			}
-			button("arrow.turn.left.up", "Enclosing Folder", enabled: files.folder(of: pane).path != "/") {
+			button(
+				"arrow.turn.left.up", "Enclosing Folder",
+				enabled: files.folder(of: pane).path != "/"
+			) {
 				files.goUp(pane)
 			}
 		}
 	}
 
-	private func button(_ symbol: String, _ help: String, enabled: Bool, _ action: @escaping () -> Void)
+	private func button(
+		_ symbol: String, _ help: String, enabled: Bool, _ action: @escaping () -> Void
+	)
 		-> some View
 	{
 		Button(action: action) {
@@ -148,7 +157,9 @@ struct BrowserPane: View {
 	@State private var items: [FileItem] = []
 	@State private var unreadable = false
 	@State private var selection: Set<URL> = []
-	@State private var sortOrder = [KeyPathComparator(\FileItem.name, comparator: .localizedStandard)]
+	@State private var sortOrder = [
+		KeyPathComparator(\FileItem.name, comparator: .localizedStandard)
+	]
 	@Environment(\.paneCommands) private var commands
 
 	private var folder: URL { Files.shared.folder(of: pane) }
@@ -184,7 +195,9 @@ struct BrowserPane: View {
 					Button("Open in New Tab") { commands.openInNewTab(url) }
 				}
 				Divider()
-				Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting(Array(urls)) }
+				Button("Show in Finder") {
+					NSWorkspace.shared.activateFileViewerSelecting(Array(urls))
+				}
 				Button("Copy Path") {
 					NSPasteboard.general.clearContents()
 					NSPasteboard.general.setString(url.path, forType: .string)
@@ -209,7 +222,9 @@ struct BrowserPane: View {
 			if Files.shared.activeFolder[tab] != folder { Files.shared.activeFolder[tab] = folder }
 			Files.shared.record("selected \(item.name)")
 		}
-		.onAppear { if Files.shared.activeFolder[tab] == nil { Files.shared.activeFolder[tab] = folder } }
+		.onAppear {
+			if Files.shared.activeFolder[tab] == nil { Files.shared.activeFolder[tab] = folder }
+		}
 	}
 
 	private var sortedItems: [FileItem] {
@@ -294,15 +309,20 @@ struct InfoPane: View {
 					}
 					Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 4) {
 						row("Size", item.size?.byteText ?? "–")
-						row("Created", item.created?.formatted(date: .abbreviated, time: .shortened) ?? "–")
-						row("Modified", item.modified?.formatted(date: .abbreviated, time: .shortened) ?? "–")
+						row(
+							"Created",
+							item.created?.formatted(date: .abbreviated, time: .shortened) ?? "–")
+						row(
+							"Modified",
+							item.modified?.formatted(date: .abbreviated, time: .shortened) ?? "–")
 						row("Where", item.url.deletingLastPathComponent().path)
 					}
 				} else {
 					Text("Select something in a browser.").foregroundStyle(.secondary)
 				}
 				Divider()
-				Text("THIS PANE").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+				Text("THIS PANE").font(.system(size: 10, weight: .semibold)).foregroundStyle(
+					.secondary)
 				layoutState
 			}
 			.font(.system(size: 11))
@@ -326,6 +346,7 @@ struct InfoPane: View {
 			row("Target", p.targetSize.map(size) ?? "–")
 			row("Cut off", p.hiddenTrailingWidth > 0 ? "\(Int(p.hiddenTrailingWidth))pt" : "–")
 			row("Reshaping", activityText)
+			row("Hovered", pane.isHovered ? "yes" : "no")
 		}
 		.font(.system(size: 11, design: .monospaced))
 	}
@@ -431,7 +452,8 @@ struct SizesPane: View {
 		guard values.isDirectory == true else { return Int64(values.totalFileAllocatedSize ?? 0) }
 		guard
 			let enumerator = FileManager.default.enumerator(
-				at: url, includingPropertiesForKeys: Array(keys), options: [], errorHandler: { _, _ in true })
+				at: url, includingPropertiesForKeys: Array(keys), options: [],
+				errorHandler: { _, _ in true })
 		else { return 0 }
 		var total: Int64 = 0
 		var count = 0
@@ -511,7 +533,8 @@ final class ActivityScrollView: NSScrollView, RiftScrollerSuppressing {
 		let recolour = colors.map { $0.0 != text || $0.1 != highlight } ?? true
 		colors = (text, highlight)
 		// The log only grows (or drops its oldest lines); rebuild when it doesn't simply extend.
-		let extends = !recolour && lines.count >= shown.count && Array(lines.prefix(shown.count)) == shown
+		let extends =
+			!recolour && lines.count >= shown.count && Array(lines.prefix(shown.count)) == shown
 		let new = extends ? Array(lines.dropFirst(shown.count)) : lines
 		if !extends { textView.textStorage?.setAttributedString(NSAttributedString()) }
 		for (offset, line) in new.enumerated() {
@@ -521,7 +544,8 @@ final class ActivityScrollView: NSScrollView, RiftScrollerSuppressing {
 					string: line + "\n",
 					attributes: [
 						.font: NSFont.monospacedSystemFont(ofSize: 10, weight: .regular),
-						.foregroundColor: line.contains("opened") || index % 5 == 0 ? highlight : text,
+						.foregroundColor: line.contains("opened") || index % 5 == 0
+							? highlight : text,
 					]))
 		}
 		shown = lines

@@ -8,10 +8,12 @@ import Testing
 	let area = CGRect(x: 0, y: 0, width: 1000, height: 800)
 
 	@Test func newLayersAreCappedSizedAndCentred() {
-		let a = RiftFloatingGeometry.newBounds(for: CGSize(width: 900, height: 700), in: area, existing: [])
+		let a = RiftFloatingGeometry.newBounds(
+			for: CGSize(width: 900, height: 700), in: area, existing: [])
 		#expect(a.size == CGSize(width: 550, height: 480))  // 55% wide, 60% tall
 		#expect(a.midX == 500 && a.midY == 400)
-		let small = RiftFloatingGeometry.newBounds(for: CGSize(width: 100, height: 80), in: area, existing: [])
+		let small = RiftFloatingGeometry.newBounds(
+			for: CGSize(width: 100, height: 80), in: area, existing: [])
 		#expect(small.size == CGSize(width: 240, height: 150))
 		let cascaded = RiftFloatingGeometry.newBounds(
 			for: CGSize(width: 900, height: 700), in: area, existing: [a])
@@ -20,9 +22,11 @@ import Testing
 
 	@Test func movesStayInsideWithAGivePastTheEdges() {
 		let start = CGRect(x: 100, y: 100, width: 200, height: 100)
-		let inside = RiftFloatingGeometry.moved(start, by: CGSize(width: 50, height: 40), in: area, snaps: false)
+		let inside = RiftFloatingGeometry.moved(
+			start, by: CGSize(width: 50, height: 40), in: area, snaps: false)
 		#expect(inside.origin == CGPoint(x: 150, y: 140))
-		let past = RiftFloatingGeometry.moved(start, by: CGSize(width: -220, height: 0), in: area, snaps: false)
+		let past = RiftFloatingGeometry.moved(
+			start, by: CGSize(width: -220, height: 0), in: area, snaps: false)
 		// 120pt past the left edge: 24 × (1 − e^−1) ≈ 15.2pt beyond it.
 		#expect(abs(past.minX - (-24 * (1 - exp(-1)))) < 0.0001)
 		let far = RiftFloatingGeometry.moved(start, by: CGSize(width: -10_000, height: 0), in: area)

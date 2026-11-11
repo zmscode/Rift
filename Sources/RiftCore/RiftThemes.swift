@@ -7,7 +7,9 @@ extension RiftTheme {
 		id: String, name: String, appearance: RiftThemeAppearance, background: String,
 		foreground: String, cursor: String, selection: String, ansi: [String]
 	) -> RiftTheme {
-		func c(_ hex: String) -> RiftRGBA { RiftRGBA(hex: hex) ?? RiftRGBA(red: 1, green: 0, blue: 1) }
+		func c(_ hex: String) -> RiftRGBA {
+			RiftRGBA(hex: hex) ?? RiftRGBA(red: 1, green: 0, blue: 1)
+		}
 		return RiftTheme(
 			id: id, name: name, appearance: appearance,
 			source: RiftThemeSource(

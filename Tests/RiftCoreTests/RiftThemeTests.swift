@@ -23,7 +23,8 @@ import Testing
 	}
 
 	@Test func darkSurfacesAreLighterAndLightOnesDarker() {
-		let dark = RiftTheme.graphite, light = RiftTheme.paper
+		let dark = RiftTheme.graphite
+		let light = RiftTheme.paper
 		func l(_ c: RiftRGBA) -> Double { RiftOKLab.lab(c).l }
 		#expect(l(dark[.surfaceRaised]) > l(dark[.canvas]))
 		#expect(abs(l(dark[.surfaceRaised]) - l(dark[.canvas]) - 0.0695) < 0.002)
@@ -62,5 +63,24 @@ import Testing
 		#expect(selection.theme(isDark: true).id == "graphite")
 		#expect(selection.theme(isDark: false).id == "paper")
 		#expect(RiftTheme.builtIn.count == 8)
+	}
+
+	/// Every theme file the demo ships (or finds locally) decodes, with unique IDs.
+	@Test func demoThemeFilesDecode() throws {
+		let folder = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+			.deletingLastPathComponent().deletingLastPathComponent()
+			.appendingPathComponent("Sources/RiftDemo/Themes")
+		let files = try FileManager.default.contentsOfDirectory(
+			at: folder, includingPropertiesForKeys: nil
+		).filter { $0.pathExtension == "json" }
+		#expect(files.contains { $0.lastPathComponent == "0x96f.json" })
+		var ids = Set<String>()
+		for file in files {
+			for theme in try RiftTheme.load(from: Data(contentsOf: file)) {
+				#expect(ids.insert(theme.id).inserted, "duplicate \(theme.id)")
+				#expect(theme.source.ansi.count == 16)
+			}
+		}
+		#expect(ids.isSuperset(of: ["0x96f", "0x96f-lighter", "0x96f-darker"]))
 	}
 }

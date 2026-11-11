@@ -14,7 +14,7 @@ let package = Package(
 		.target(name: "RiftCore"),
 		// AppKit view, pane drag & drop, SwiftUI wrapper.
 		.target(name: "Rift", dependencies: ["RiftCore"]),
-		.executableTarget(name: "RiftDemo", dependencies: ["Rift"]),
+		.executableTarget(name: "RiftDemo", dependencies: ["Rift"], exclude: ["Themes"]),
 		.testTarget(name: "RiftCoreTests", dependencies: ["RiftCore"]),
 	]
 )

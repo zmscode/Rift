@@ -23,17 +23,27 @@ struct FilesSettings: Equatable {
 	var keepsWindowWidth = true
 	var swipe = RiftSidebarSwipe.swipe
 	var borderColor = RiftFocusBorderColor.accent
-	/// "auto" (Paper in light mode, Graphite in dark), or a built-in theme's ID.
+	/// "auto" (Paper in light mode, Graphite in dark), or a theme's ID.
 	var themeID = "auto"
 
 	var theme: RiftThemeSelection {
-		RiftTheme.builtIn.first { $0.id == themeID }.map { RiftThemeSelection($0) } ?? .standard
+		FilesThemes.all.first { $0.id == themeID }.map { RiftThemeSelection($0) } ?? .standard
 	}
 	var asksBeforeClosingBusyPanes = true
 	/// Where the tabs go: rows in the sidebar, or a bar across the top.
-	enum TabPlacement: String, CaseIterable { case sidebar = "Sidebar", top = "Top" }
+	enum TabPlacement: String, CaseIterable {
+		case sidebar = "Sidebar"
+		case top = "Top"
+	}
 	var tabPlacement = TabPlacement.sidebar
 	var sidebarTextSize = RiftSidebarTextSize.medium
+	/// Pane headers as an invisible top strip (each pane draws its own title), or bars with a
+	/// title, actions and close button.
+	enum PaneHeaders: String, CaseIterable {
+		case strip = "Strip"
+		case bars = "Bars"
+	}
+	var paneHeaders = PaneHeaders.strip
 
 	var density: RiftChromeDensity { look == .compact ? .compact : .comfortable }
 
@@ -60,6 +70,8 @@ struct FilesSettings: Equatable {
 		c.inactivePaneFade = unfocusedFade
 		c.paneContentSizing = contentSizing
 		c.autoBalance = autoBalance
+		c.showsPaneHeaders = paneHeaders == .bars
+		if paneHeaders == .bars { c.headerHeight = 28 }
 		return c
 	}
 }
@@ -81,6 +93,8 @@ struct FilesActions {
 	/// Selects the tab this many places along (wrapping).
 	var selectTab: (Int) -> Void
 	/// Opens a folder in the focused browser, or in a new tab.
+	/// Opens the pane navigator.
+	var showNavigator: () -> Void
 	var openPlace: (URL, _ newTab: Bool) -> Void
 	var goBack: () -> Void
 	var goForward: () -> Void
@@ -132,7 +146,8 @@ struct FilesTab: Identifiable, @MainActor Equatable {
 	}
 
 	static func == (a: FilesTab, b: FilesTab) -> Bool {
-		a.id == b.id && a.layout == b.layout && a.focused == b.focused && a.zoomed == b.zoomed && a.floating == b.floating
+		a.id == b.id && a.layout == b.layout && a.focused == b.focused && a.zoomed == b.zoomed
+			&& a.floating == b.floating
 			&& a.customTitle == b.customTitle
 	}
 }
@@ -166,6 +181,7 @@ struct FilesWindow: View {
 	@State private var sidebarCollapsed = false
 	@State private var sidebarWidth = RiftSidebarMath.defaultWidth
 	@State private var foldProgress: CGFloat = 0
+	@State private var showsNavigator = false
 	@Environment(\.openWindow) private var openWindow
 
 	init(seed: String?) {
@@ -202,7 +218,9 @@ struct FilesWindow: View {
 				RiftSidebarAccessory(symbolName: "rectangle.split.2x1", label: "Split Browser") {
 					actions.split(.right, .browser)
 				},
-				RiftSidebarAccessory(symbolName: "arrow.up.left.and.arrow.down.right", label: "Zoom Pane") {
+				RiftSidebarAccessory(
+					symbolName: "arrow.up.left.and.arrow.down.right", label: "Zoom Pane"
+				) {
 					actions.zoom()
 				},
 				RiftSidebarAccessory(symbolName: "rectangle.split.3x1", label: "Balance") {
@@ -237,10 +255,15 @@ struct FilesWindow: View {
 		.ignoresSafeArea()
 		.frame(minHeight: 420)
 		.focusedSceneValue(\.files, actions)
+		.overlay(alignment: .top) {
+			if showsNavigator { navigator.padding(.top, 60) }
+		}
 		// A tab whose last pane closed or moved away closes too, and the window with the last tab.
 		.onChange(of: tabs.map { $0.layout == nil && $0.floating.isEmpty }) { _, empties in
 			guard empties.contains(true) else { return }
-			for id in tabs.filter({ $0.layout == nil && $0.floating.isEmpty }).map(\.id) { closeTab(id) }
+			for id in tabs.filter({ $0.layout == nil && $0.floating.isEmpty }).map(\.id) {
+				closeTab(id)
+			}
 		}
 		.onAppear { Files.shared.record("window opened") }
 	}
@@ -312,7 +335,8 @@ struct FilesWindow: View {
 	private func layoutView(_ tab: Binding<FilesTab>) -> RiftLayoutView<String, FilesPane> {
 		let id = tab.wrappedValue.id
 		return RiftLayoutView(
-			layout: tab.layout, focusedPane: tab.focused, zoomedPane: tab.zoomed, floating: tab.floating,
+			layout: tab.layout, focusedPane: tab.focused, zoomedPane: tab.zoomed,
+			floating: tab.floating,
 			configuration: settings.configuration, controller: tab.wrappedValue.controller,
 			title: PaneIDs.title(of:),
 			onStructuralActivityChange: { activity = $0 },
@@ -321,9 +345,17 @@ struct FilesWindow: View {
 				openWindow(value: pane)
 			},
 			dragPreview: { AnyView(DragCard(id: $0)) },
-			paneActivity: { busyActivity(of: $0) }
+			paneActivity: { busyActivity(of: $0) },
+			paneActions: { pane in paneActions(pane, tab: id) },
+			paneMenu: { pane in paneMenu(pane, tab: id) },
+			onRenamePane: { pane, name in
+				Files.shared.paneNames[pane] = name
+				Files.shared.record("renamed a pane to \(name)")
+			}
 		) { pane in
-			FilesPane(pane: pane, tab: id, isTranslucent: settings.look != .plain, activity: activity)
+			FilesPane(
+				pane: pane, tab: id, isTranslucent: settings.look != .plain, activity: activity,
+				drawsTitle: settings.paneHeaders == .strip)
 		}
 	}
 
@@ -331,6 +363,72 @@ struct FilesWindow: View {
 		PaneCommands(
 			openInNewTab: { url in openInNewTab(url) },
 			addPane: { kind in actions.split(.right, kind) })
+	}
+
+	/// The navigator: every tab's panes, with minimaps.
+	private var navigator: some View {
+		RiftPaneNavigator(
+			sections: tabs.map {
+				.init(id: $0.id, title: $0.title, layout: $0.layout, floating: $0.floating)
+			},
+			current: current?.wrappedValue.focused, title: PaneIDs.title(of:),
+			symbol: { PaneIDs.kind(of: $0).symbol },
+			onPick: { tabID, pane in
+				if let id = tabID.base as? Int, let index = tabs.firstIndex(where: { $0.id == id })
+				{
+					selection = id
+					tabs[index].focused = pane
+				}
+				showsNavigator = false
+			},
+			onCancel: { showsNavigator = false }
+		)
+		.shadow(color: .black.opacity(0.3), radius: 20, y: 8)
+	}
+
+	/// Header buttons: browsers go up a folder; every pane can float (or dock) and zoom.
+	private func paneActions(_ pane: String, tab: Int) -> [RiftPaneHeaderAction] {
+		let controller = tabs.first { $0.id == tab }?.controller
+		var actions: [RiftPaneHeaderAction] = []
+		if PaneIDs.kind(of: pane) == .browser {
+			actions.append(
+				RiftPaneHeaderAction(symbolName: "arrow.turn.left.up", label: "Enclosing Folder") {
+					Files.shared.goUp(pane)
+				})
+		}
+		actions.append(
+			RiftPaneHeaderAction(symbolName: "macwindow.on.rectangle", label: "Float or Dock") {
+				_ = controller?.toggleFloating(pane)
+			})
+		actions.append(
+			RiftPaneHeaderAction(symbolName: "arrow.up.left.and.arrow.down.right", label: "Zoom") {
+				controller?.view?.toggleZoom(pane)
+			})
+		return actions
+	}
+
+	/// The right-click menu on a pane's header or top strip.
+	private func paneMenu(_ pane: String, tab: Int) -> [RiftMenuItem] {
+		let controller = tabs.first { $0.id == tab }?.controller
+		let floats = controller?.view?.isFloating(pane) ?? false
+		return [
+			RiftMenuItem(floats ? "Dock Pane" : "Float Pane", systemImage: "macwindow.on.rectangle")
+			{
+				_ = controller?.toggleFloating(pane)
+			},
+			RiftMenuItem("Zoom Pane", systemImage: "arrow.up.left.and.arrow.down.right") {
+				controller?.view?.toggleZoom(pane)
+			},
+			.separator,
+			RiftMenuItem("Split Right with Browser", systemImage: "rectangle.split.2x1") {
+				let new = PaneIDs.make(.browser)
+				Files.shared.setFolder(Files.shared.folder(of: pane), of: new)
+				_ = controller?.view?.split(pane, edge: .right, newPane: new)
+			},
+			.separator,
+			RiftMenuItem("Close Pane", systemImage: "xmark") { _ = controller?.close(pane) },
+			RiftMenuItem("Close Other Panes") { _ = controller?.closeOthers(pane) },
+		]
 	}
 
 	private func busyActivity(of pane: String) -> String? {
@@ -378,7 +476,7 @@ struct FilesWindow: View {
 
 	/// A single (non-automatic) theme sets the window's appearance to match it.
 	private var preferredScheme: ColorScheme? {
-		guard let theme = RiftTheme.builtIn.first(where: { $0.id == settings.themeID }) else {
+		guard let theme = FilesThemes.all.first(where: { $0.id == settings.themeID }) else {
 			return nil
 		}
 		return theme.appearance == .dark ? .dark : .light
@@ -411,6 +509,7 @@ struct FilesWindow: View {
 				guard let index = selectedIndex, !tabs.isEmpty else { return }
 				selection = tabs[(index + offset + tabs.count) % tabs.count].id
 			},
+			showNavigator: { showsNavigator = true },
 			openPlace: { url, newTab in
 				if newTab || browser == nil {
 					openInNewTab(url)
@@ -422,12 +521,16 @@ struct FilesWindow: View {
 			goForward: { if let browser { Files.shared.goForward(browser) } },
 			goUp: { if let browser { Files.shared.goUp(browser) } },
 			toggleFloating: {
-				if controller?.toggleFloating() == true { Files.shared.record("floated or docked a pane") }
+				if controller?.toggleFloating() == true {
+					Files.shared.record("floated or docked a pane")
+				}
 			},
 			minimiseFloating: {
 				guard let tab = current?.wrappedValue else { return }
 				if let focused = tab.focused,
-					let layer = tab.floating.first(where: { $0.layout.contains(focused) && !$0.isMinimised })
+					let layer = tab.floating.first(where: {
+						$0.layout.contains(focused) && !$0.isMinimised
+					})
 				{
 					controller?.setMinimised(true, layer: layer.id)
 					Files.shared.record("minimised a floating layer")
@@ -461,6 +564,8 @@ struct RiftFilesApp: App {
 					.keyboardShortcut("[", modifiers: [.command, .shift])
 			}
 			CommandMenu("Go") {
+				Button("Go to Pane…") { actions?.showNavigator() }.keyboardShortcut("p")
+				Divider()
 				Button("Back") { actions?.goBack() }.keyboardShortcut("[")
 				Button("Forward") { actions?.goForward() }.keyboardShortcut("]")
 				Button("Enclosing Folder") { actions?.goUp() }.keyboardShortcut(.upArrow)
@@ -502,7 +607,7 @@ struct RiftFilesApp: App {
 			CommandMenu("Theme") {
 				Button("Automatic") { actions?.setTheme("auto") }
 				Divider()
-				ForEach(RiftTheme.builtIn) { theme in
+				ForEach(FilesThemes.all) { theme in
 					Button(theme.name) { actions?.setTheme(theme.id) }
 				}
 			}

@@ -154,6 +154,7 @@ extension RiftView {
 		}
 		view.content.onStructuralActivityChange = { [weak self] _ in self?.forwardFloatingActivity()
 		}
+		view.content.onHoverChange = { [weak self] pane in self?.floatingHoverChanged(pane) }
 	}
 
 	private func floatingLayoutChanged(_ id: UUID, _ layout: RiftLayout<PaneID>?) {
@@ -217,6 +218,11 @@ extension RiftView {
 			?? paneLayout?.firstPaneID
 		setFocus(target, notify: false, makeFirstResponder: true)
 		onFocusChange?(target)
+	}
+
+	/// Hover inside floating layers is reported with the tiled panes'.
+	private func floatingHoverChanged(_ pane: PaneID?) {
+		onHoverChange?(pane ?? hoveredPane)
 	}
 
 	private func forwardFloatingActivity() {
@@ -387,4 +393,3 @@ extension RiftView {
 		}
 	}
 }
-

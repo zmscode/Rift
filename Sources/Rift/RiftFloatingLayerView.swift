@@ -9,7 +9,7 @@ final class RiftFloatingLayerView<PaneID: Hashable & Sendable>: NSView {
 	let content: RiftView<PaneID>
 	weak var host: RiftView<PaneID>?
 
-	private let shadowLayer = CALayer() 
+	private let shadowLayer = CALayer()
 	private let clip = NSView()
 	private let moveStrip = RiftFloatingMoveStrip()
 	private var resizeHandles: [RiftFloatingResizeHandle] = []
@@ -41,6 +41,9 @@ final class RiftFloatingLayerView<PaneID: Hashable & Sendable>: NSView {
 		content.paneTitle = host.paneTitle
 		content.makeDragPreview = host.makeDragPreview
 		content.paneActivity = host.paneActivity
+		content.paneActions = host.paneActions
+		content.paneMenu = host.paneMenu
+		content.onRenamePane = host.onRenamePane
 		clip.addSubview(content)
 		moveStrip.onDrag = { [weak self] phase, delta in
 			self?.host?.floatingMove(self, phase: phase, delta: delta)

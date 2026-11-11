@@ -42,6 +42,21 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 	/// Builds the floating preview shown while a pane is dragged, sized to its fitting size.
 	/// `nil` (or returning `nil`) shows a snapshot of the pane instead.
 	public var makeDragPreview: ((PaneID) -> NSView?)?
+	/// Buttons for a pane's header (with `showsPaneHeaders`), at its trailing edge.
+	public var paneActions: ((PaneID) -> [RiftPaneHeaderAction])? {
+		didSet { refreshHeaderExtras() }
+	}
+	/// The menu shown on a right-click in a pane's header or top strip.
+	public var paneMenu: ((PaneID) -> NSMenu?)? { didSet { refreshHeaderExtras() } }
+	/// Renaming: clicking the title of the focused pane (in a window that has been key for a
+	/// moment, and without dragging) edits it in place, and Return calls this.
+	public var onRenamePane: ((PaneID, String) -> Void)?
+	/// The pane under the pointer (`nil` when it is over none, or over a floating layer above).
+	public private(set) var hoveredPane: PaneID? {
+		didSet { if hoveredPane != oldValue { onHoverChange?(hoveredPane) } }
+	}
+	/// Called when the pointer moves onto another pane (or off them all).
+	public var onHoverChange: ((PaneID?) -> Void)?
 	/// Title shown in the pane header. Defaults to the pane ID's description.
 	public var paneTitle: ((PaneID) -> String)? { didSet { refreshTitles() } }
 
@@ -254,6 +269,9 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 			self?.trackPaneDrag(id, startingWith: event)
 		}
 		container.header.onClose = { [weak self] in self?.close(id) }
+		container.header.menuProvider = { [weak self] in self?.paneMenu?(id) }
+		container.strip.menuProvider = { [weak self] in self?.paneMenu?(id) }
+		container.header.actions = paneActions?(id) ?? []
 		container.strip.onHandleMouseDown = { [weak self, weak strip = container.strip] event in
 			self?.trackPaneDrag(id, startingWith: event, replayingClicksThrough: strip)
 		}
@@ -1474,11 +1492,34 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 	}
 
 	private func headerMouseDown(_ pane: PaneID, _ event: NSEvent, header: RiftPaneHeaderView?) {
-		guard headerMovesWindow, !event.modifierFlags.contains(.option) else {
+		// A click on the focused pane's title, in a window that was already key (not the click
+		// that activated it, nor within a double-click of it), arms a rename.
+		let sinceFirstMouse = header?.firstMouseTimestamp.map { event.timestamp - $0 } ?? .infinity
+		let armsRename =
+			onRenamePane != nil && focusedPane == pane && event.clickCount == 1
+			&& (window?.isKeyWindow ?? false) && NSApp.isActive
+			&& sinceFirstMouse > NSEvent.doubleClickInterval
+			&& (header?.titleContains(windowPoint: event.locationInWindow) ?? false)
+		let start = NSEvent.mouseLocation
+		if headerMovesWindow, !event.modifierFlags.contains(.option) {
+			beginWindowDrag(from: pane, with: event)
+		} else {
 			trackPaneDrag(pane, startingWith: event)
-			return
 		}
-		beginWindowDrag(from: pane, with: event)
+		// Both of those return once the button is up: a press that didn't move is a click.
+		let end = NSEvent.mouseLocation
+		guard armsRename, hypot(end.x - start.x, end.y - start.y) < 3, let header else { return }
+		header.beginRenaming { [weak self] title in self?.onRenamePane?(pane, title) }
+	}
+
+	/// Re-reads every header's actions (after `paneActions` changes).
+	public func refreshHeaderExtras() {
+		for (id, container) in containers { container.header.actions = paneActions?(id) ?? [] }
+		for view in floatingViews.values {
+			view.content.paneActions = paneActions
+			view.content.paneMenu = paneMenu
+			view.content.onRenamePane = onRenamePane
+		}
 	}
 
 	/// Moves the window from a header or the top strip: focuses the pane, handles a double-click
@@ -1532,12 +1573,23 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 		super.mouseExited(with: event)
 		isHoverLockSuspended = false
 		refreshMovementLock()
+		hoveredPane = nil
+	}
+
+	/// The tiled pane under a window point, unless a floating layer covers it.
+	private func updateHover(_ windowPoint: CGPoint) {
+		let point = convert(windowPoint, from: nil)
+		let covered = floating.contains {
+			!$0.isMinimised && (floatingViews[$0.id]?.frame.contains(point) ?? false)
+		}
+		hoveredPane = covered || !bounds.contains(point) ? nil : displayGeometry().pane(at: point)
 	}
 
 	open override func mouseMoved(with event: NSEvent) {
 		super.mouseMoved(with: event)
 		isHoverLockSuspended = false
 		refreshMovementLock()
+		updateHover(event.locationInWindow)
 		guard configuration.focusFollowsMouse, window?.isKeyWindow == true,
 			dividerDrag == nil, draggingPane == nil
 		else { return }
@@ -1768,7 +1820,9 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 	{
 		guard bounds.contains(point) else { return nil }
 		// A floating layer covers the tiled panes under it.
-		if floating.contains(where: { !$0.isMinimised && (floatingViews[$0.id]?.frame.contains(point) ?? false) }) {
+		if floating.contains(where: {
+			!$0.isMinimised && (floatingViews[$0.id]?.frame.contains(point) ?? false)
+		}) {
 			return nil
 		}
 		guard paneLayout != nil else {

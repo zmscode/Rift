@@ -67,8 +67,11 @@ enum PaneIDs {
 	}
 
 	/// A browser is named after its folder; other panes after their kind.
+	/// A pane's name: what it was renamed to, a browser's folder, or its kind.
 	static func title(of id: String) -> String {
-		kind(of: id) == .browser ? Files.shared.folder(of: id).displayName : kind(of: id).title
+		if let custom = Files.shared.paneNames[id] { return custom }
+		return kind(of: id) == .browser
+			? Files.shared.folder(of: id).displayName : kind(of: id).title
 	}
 
 	/// A browser on `folder` with a preview and info beside it, and the activity log under it.
@@ -144,8 +147,9 @@ struct FileItem: Identifiable, Hashable, Sendable {
 extension URL {
 	/// The name Finder shows ("Macintosh HD" for the root).
 	var displayName: String {
-		path == "/" ? (try? resourceValues(forKeys: [.volumeNameKey]).volumeName) ?? "/" :
-			FileManager.default.displayName(atPath: path)
+		path == "/"
+			? (try? resourceValues(forKeys: [.volumeNameKey]).volumeName) ?? "/"
+			: FileManager.default.displayName(atPath: path)
 	}
 }
 
@@ -174,12 +178,16 @@ final class Files {
 			Place(name: "Desktop", symbol: "menubar.dock.rectangle", url: dir(.desktopDirectory)),
 			Place(name: "Documents", symbol: "doc", url: dir(.documentDirectory)),
 			Place(name: "Downloads", symbol: "arrow.down.circle", url: dir(.downloadsDirectory)),
-			Place(name: "Applications", symbol: "square.grid.3x3", url: URL(fileURLWithPath: "/Applications")),
+			Place(
+				name: "Applications", symbol: "square.grid.3x3",
+				url: URL(fileURLWithPath: "/Applications")),
 		]
 	}()
 
 	static let locations: [Place] = [
-		Place(name: URL(fileURLWithPath: "/").displayName, symbol: "internaldrive", url: URL(fileURLWithPath: "/"))
+		Place(
+			name: URL(fileURLWithPath: "/").displayName, symbol: "internaldrive",
+			url: URL(fileURLWithPath: "/"))
 	]
 
 	private struct History {
@@ -198,6 +206,8 @@ final class Files {
 	/// Sizes panes still counting.
 	var measuring: Set<String> = []
 	private(set) var log: [String] = []
+	/// Names panes were given by renaming their header title.
+	var paneNames: [String: String] = [:]
 
 	func folder(of pane: String) -> URL {
 		_ = revision

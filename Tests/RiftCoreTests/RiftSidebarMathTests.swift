@@ -14,7 +14,10 @@ import Testing
 	}
 
 	@Test func leftSidebarReservesRoomAsItFolds() {
-		func room(_ p: CGFloat, fullScreen: Bool = false, density: RiftChromeDensity = .comfortable, hides: Bool = false) -> CGFloat {
+		func room(
+			_ p: CGFloat, fullScreen: Bool = false, density: RiftChromeDensity = .comfortable,
+			hides: Bool = false
+		) -> CGFloat {
 			RiftSidebarMath.leadingButtonRoom(
 				position: .left, collapseProgress: p, isFullScreen: fullScreen, density: density,
 				hidesToggle: hides)
@@ -33,10 +36,12 @@ import Testing
 				position: .right, collapseProgress: 0.3, isFullScreen: false, density: .comfortable,
 				hidesToggle: false) == 76)
 		#expect(
-			RiftSidebarMath.trailingButtonRoom(position: .right, collapseProgress: 1, hidesToggle: false)
+			RiftSidebarMath.trailingButtonRoom(
+				position: .right, collapseProgress: 1, hidesToggle: false)
 				== 34)
 		#expect(
-			RiftSidebarMath.trailingButtonRoom(position: .left, collapseProgress: 1, hidesToggle: false)
+			RiftSidebarMath.trailingButtonRoom(
+				position: .left, collapseProgress: 1, hidesToggle: false)
 				== 0)
 	}
 
@@ -89,7 +94,8 @@ import Testing
 
 	@Test func foldsTakeTheSpringsSettlingTimeOrThreeTenths() {
 		#expect(RiftSidebarMath.foldDuration(curve: .linear) == 0.3)
-		#expect(RiftSidebarMath.foldDuration(curve: .snappy) == RiftMotionCurve.snappy.settlingDuration)
+		#expect(
+			RiftSidebarMath.foldDuration(curve: .snappy) == RiftMotionCurve.snappy.settlingDuration)
 	}
 }
 
@@ -97,9 +103,11 @@ import Testing
 	@Test func buttonsRunInFromTheOuterEdge() {
 		let row = RiftSidebarMath.titleRowButtons(
 			count: 2, sidebarWidth: 240, position: .left, density: .comfortable, clearance: 123)
-		#expect(row.frames == [
-			CGRect(x: 202, y: 11, width: 28, height: 28), CGRect(x: 172, y: 11, width: 28, height: 28),
-		])
+		#expect(
+			row.frames == [
+				CGRect(x: 202, y: 11, width: 28, height: 28),
+				CGRect(x: 172, y: 11, width: 28, height: 28),
+			])
 		#expect(row.more == nil)
 		let right = RiftSidebarMath.titleRowButtons(
 			count: 1, sidebarWidth: 240, position: .right, density: .compact, clearance: 40)

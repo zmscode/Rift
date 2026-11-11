@@ -82,7 +82,9 @@ public enum RiftOKLab {
 	}
 
 	public static func lab(_ color: RiftRGBA) -> Lab {
-		let r = linear(color.red), g = linear(color.green), b = linear(color.blue)
+		let r = linear(color.red)
+		let g = linear(color.green)
+		let b = linear(color.blue)
 		let l = cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b)
 		let m = cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b)
 		let s = cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b)
@@ -106,7 +108,8 @@ public enum RiftOKLab {
 
 	/// `from` moved `t` of the way to `to`, in OKLab.
 	public static func mix(_ from: RiftRGBA, _ to: RiftRGBA, _ t: Double) -> RiftRGBA {
-		let a = lab(from), b = lab(to)
+		let a = lab(from)
+		let b = lab(to)
 		return rgb(
 			Lab(l: a.l + (b.l - a.l) * t, a: a.a + (b.a - a.a) * t, b: a.b + (b.b - a.b) * t))
 	}
@@ -118,7 +121,8 @@ public enum RiftOKLab {
 	{
 		let base = lab(color)
 		let source = tone.map(lab) ?? base
-		let c = source.chroma, h = source.hue
+		let c = source.chroma
+		let h = source.hue
 		return rgb(Lab(l: min(max(base.l + delta, 0), 1), a: c * cos(h), b: c * sin(h)))
 	}
 }
@@ -224,7 +228,8 @@ public struct RiftTheme: Hashable, Sendable, Identifiable {
 	{
 		let dark = appearance == .dark
 		let sign: Double = dark ? 1 : -1
-		let bg = s.background, fg = s.foreground
+		let bg = s.background
+		let fg = s.foreground
 		func lift(_ amount: Double, tone: RiftRGBA? = nil) -> RiftRGBA {
 			RiftOKLab.shifted(bg, lightness: sign * amount, tone: tone)
 		}

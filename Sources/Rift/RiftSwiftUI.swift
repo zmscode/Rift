@@ -25,7 +25,9 @@ public final class RiftController<PaneID: Hashable & Sendable> {
 
 	/// Lifts a pane into a floating layer, or docks a floating one back into the layout.
 	@discardableResult
-	public func toggleFloating(_ pane: PaneID? = nil) -> Bool { view?.toggleFloating(pane) ?? false }
+	public func toggleFloating(_ pane: PaneID? = nil) -> Bool {
+		view?.toggleFloating(pane) ?? false
+	}
 
 	@discardableResult
 	public func float(_ pane: PaneID? = nil) -> Bool { view?.float(pane) ?? false }
@@ -34,7 +36,9 @@ public final class RiftController<PaneID: Hashable & Sendable> {
 	public func dock(_ pane: PaneID) -> Bool { view?.dock(pane) ?? false }
 
 	/// Minimises a floating layer to a capsule, or brings it back.
-	public func setMinimised(_ minimised: Bool, layer: UUID) { view?.setMinimised(minimised, layer: layer) }
+	public func setMinimised(_ minimised: Bool, layer: UUID) {
+		view?.setMinimised(minimised, layer: layer)
+	}
 	@discardableResult
 	public func moveFocus(_ direction: RiftDirection, wraps: Bool = true) -> Bool {
 		view?.moveFocus(direction, wraps: wraps) ?? false
@@ -67,6 +71,55 @@ public struct RiftPaneContext<PaneID: Hashable & Sendable> {
 	public let accessibilityLabel: String
 	/// How the pane is being presented: whether the layout has settled, zoom, sizes.
 	public let presentation: RiftPanePresentation
+	/// Whether the pointer is over the pane (and not over a floating layer above it).
+	public var isHovered: Bool = false
+}
+
+/// An item in a pane's menu (see `RiftLayoutView`'s `paneMenu`).
+public struct RiftMenuItem {
+	public var title: String
+	public var systemImage: String?
+	public var isEnabled: Bool
+	public var action: (() -> Void)?
+
+	public init(
+		_ title: String, systemImage: String? = nil, isEnabled: Bool = true,
+		action: @escaping () -> Void
+	) {
+		self.title = title
+		self.systemImage = systemImage
+		self.isEnabled = isEnabled
+		self.action = action
+	}
+
+	private init() {
+		title = ""
+		systemImage = nil
+		isEnabled = false
+		action = nil
+	}
+
+	/// A line between groups of items.
+	public static var separator: RiftMenuItem { RiftMenuItem() }
+
+	@MainActor static func menu(_ items: [RiftMenuItem]) -> NSMenu? {
+		guard !items.isEmpty else { return nil }
+		let menu = NSMenu()
+		menu.autoenablesItems = false
+		for item in items {
+			guard let action = item.action else {
+				menu.addItem(.separator())
+				continue
+			}
+			let entry = RiftClosureMenuItem(title: item.title, handler: action)
+			entry.isEnabled = item.isEnabled
+			if let image = item.systemImage {
+				entry.image = NSImage(systemSymbolName: image, accessibilityDescription: nil)
+			}
+			menu.addItem(entry)
+		}
+		return menu
+	}
 }
 
 /// Holds one pane's context so its SwiftUI content updates when focus or presentation changes.
@@ -115,7 +168,12 @@ final class RiftHostedPane<PaneID: Hashable & Sendable>: NSHostingView<AnyView>,
 		model.context = RiftPaneContext(
 			paneID: old.paneID, isFocused: old.isFocused,
 			accessibilityLabel: old.accessibilityLabel,
-			presentation: presentation)
+			presentation: presentation, isHovered: old.isHovered)
+	}
+
+	func setHovered(_ hovered: Bool) {
+		guard model.context.isHovered != hovered else { return }
+		model.context.isHovered = hovered
 	}
 
 	func setTheme(_ selection: RiftThemeSelection?) {
@@ -127,7 +185,7 @@ final class RiftHostedPane<PaneID: Hashable & Sendable>: NSHostingView<AnyView>,
 		guard old.isFocused != focused || old.accessibilityLabel != label else { return }
 		model.context = RiftPaneContext(
 			paneID: old.paneID, isFocused: focused, accessibilityLabel: label,
-			presentation: old.presentation)
+			presentation: old.presentation, isHovered: old.isHovered)
 	}
 }
 
@@ -156,6 +214,9 @@ public struct RiftLayoutView<PaneID: Hashable & Sendable, Content: View>: NSView
 	private let onTearOut: ((PaneID, CGPoint) -> Void)?
 	private let dragPreview: ((PaneID) -> AnyView)?
 	private let paneActivity: ((PaneID) -> String?)?
+	private let paneActions: ((PaneID) -> [RiftPaneHeaderAction])?
+	private let paneMenu: ((PaneID) -> [RiftMenuItem])?
+	private let onRenamePane: ((PaneID, String) -> Void)?
 	private let content: (RiftPaneContext<PaneID>) -> Content
 	private var isLayoutHidden = false
 
@@ -170,6 +231,9 @@ public struct RiftLayoutView<PaneID: Hashable & Sendable, Content: View>: NSView
 	///     Without one, a snapshot of the pane is shown.
 	///   - paneActivity: what a busy pane is doing ("is still working"); closing busy panes asks
 	///     first.
+	///   - paneActions: buttons at the trailing edge of pane headers (with `showsPaneHeaders`).
+	///   - paneMenu: the menu for a right-click in a pane's header or top strip.
+	///   - onRenamePane: lets the focused pane's header title be clicked to rename it.
 	///   - content: the pane's SwiftUI content.
 	public init(
 		layout: Binding<RiftLayout<PaneID>?>,
@@ -185,6 +249,9 @@ public struct RiftLayoutView<PaneID: Hashable & Sendable, Content: View>: NSView
 		onTearOut: ((PaneID, CGPoint) -> Void)? = nil,
 		dragPreview: ((PaneID) -> AnyView)? = nil,
 		paneActivity: ((PaneID) -> String?)? = nil,
+		paneActions: ((PaneID) -> [RiftPaneHeaderAction])? = nil,
+		paneMenu: ((PaneID) -> [RiftMenuItem])? = nil,
+		onRenamePane: ((PaneID, String) -> Void)? = nil,
 		@ViewBuilder content: @escaping (RiftPaneContext<PaneID>) -> Content
 	) {
 		_layout = layout
@@ -200,6 +267,9 @@ public struct RiftLayoutView<PaneID: Hashable & Sendable, Content: View>: NSView
 		self.onTearOut = onTearOut
 		self.dragPreview = dragPreview
 		self.paneActivity = paneActivity
+		self.paneActions = paneActions
+		self.paneMenu = paneMenu
+		self.onRenamePane = onRenamePane
 		self.content = content
 	}
 
@@ -245,6 +315,12 @@ public struct RiftLayoutView<PaneID: Hashable & Sendable, Content: View>: NSView
 		view.onStructuralActivityChange = { coordinator.parent.onStructuralActivityChange?($0) }
 		view.onTearOut = { pane, _, point in coordinator.parent.onTearOut?(pane, point) }
 		view.paneActivity = { pane in coordinator.parent.paneActivity?(pane) }
+		view.onHoverChange = { [weak view] pane in
+			guard let view else { return }
+			for id in view.allPaneIDs {
+				(view.contentView(for: id) as? RiftHostedPane<PaneID>)?.setHovered(id == pane)
+			}
+		}
 		view.makeDragPreview = { pane in
 			coordinator.parent.dragPreview.map { NSHostingView(rootView: $0(pane)) }
 		}
@@ -263,6 +339,12 @@ public struct RiftLayoutView<PaneID: Hashable & Sendable, Content: View>: NSView
 
 	public func updateNSView(_ view: RiftView<PaneID>, context: Context) {
 		context.coordinator.parent = self
+		let coordinator = context.coordinator
+		view.paneActions = paneActions.map { _ in { coordinator.parent.paneActions?($0) ?? [] } }
+		view.paneMenu = paneMenu.map { _ in
+			{ RiftMenuItem.menu(coordinator.parent.paneMenu?($0) ?? []) }
+		}
+		view.onRenamePane = onRenamePane.map { _ in { coordinator.parent.onRenamePane?($0, $1) } }
 		if view.isHidden != isLayoutHidden { view.isHidden = isLayoutHidden }
 		view.configuration = configuration
 		view.paneTitle = title

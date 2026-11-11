@@ -15,7 +15,8 @@ import Testing
 	}
 
 	@Test func tabsSitOnePointApart() {
-		let frames = RiftTabBarMath.tabFrames(leading: 10, width: 100, count: 3, midY: 20, height: 30)
+		let frames = RiftTabBarMath.tabFrames(
+			leading: 10, width: 100, count: 3, midY: 20, height: 30)
 		#expect(frames.map(\.minX) == [10, 111, 212])
 		#expect(frames.allSatisfy { $0.minY == 5 && $0.height == 30 })
 	}
@@ -63,8 +64,10 @@ import Testing
 		#expect(RiftTabBarMath.reorderedIndex(draggedMidX: 90, current: 2, slotMidXs: mids) == 0)
 		#expect(RiftTabBarMath.reorderedIndex(draggedMidX: 195, current: 2, slotMidXs: mids) == 2)
 		// Narrow slots use a tenth of the distance.
-		#expect(RiftTabBarMath.reorderedIndex(draggedMidX: 33, current: 0, slotMidXs: [0, 60]) == 0)
-		#expect(RiftTabBarMath.reorderedIndex(draggedMidX: 37, current: 0, slotMidXs: [0, 60]) == 1)
+		#expect(
+			RiftTabBarMath.reorderedIndex(draggedMidX: 33, current: 0, slotMidXs: [0, 60]) == 0)
+		#expect(
+			RiftTabBarMath.reorderedIndex(draggedMidX: 37, current: 0, slotMidXs: [0, 60]) == 1)
 	}
 
 	@Test func dividersHideBesideHighlightedTabs() {

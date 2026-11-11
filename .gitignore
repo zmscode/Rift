@@ -3,3 +3,7 @@
 *.xcodeproj/
 DerivedData/
 .DS_Store
+
+# Local themes stay out of the repo; only 0x96f is committed.
+Sources/RiftDemo/Themes/*
+!Sources/RiftDemo/Themes/0x96f.json
