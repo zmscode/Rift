@@ -124,6 +124,8 @@ struct ToolPane: View {
 				.padding(.bottom, 8)
 			tool.frame(maxWidth: .infinity, maxHeight: .infinity)
 		}
+		.foregroundStyle(themeColor(.content))
+		.background(themeColor(.surface).opacity(isTranslucent ? 0 : 1))
 		.background(
 			LinearGradient(
 				colors: [
@@ -132,6 +134,13 @@ struct ToolPane: View {
 				],
 				startPoint: .top, endPoint: .bottom)
 		)
+	}
+
+	@Environment(\.riftThemeSelection) private var themeSelection
+	@Environment(\.colorScheme) private var colorScheme
+
+	private func themeColor(_ role: RiftColorRole) -> Color {
+		Color(rift: (themeSelection ?? .standard).theme(isDark: colorScheme == .dark)[role])
 	}
 
 	@ViewBuilder private var tool: some View {
@@ -286,9 +295,14 @@ struct OrbitTool: View {
 /// reshapes (it adopts `RiftScrollerSuppressing`).
 struct LogTool: View {
 	@State private var model = LogModel()
+	@Environment(\.riftThemeSelection) private var themeSelection
+	@Environment(\.colorScheme) private var colorScheme
 
 	var body: some View {
-		LogView(model: model)
+		let theme = (themeSelection ?? .standard).theme(isDark: colorScheme == .dark)
+		LogView(
+			model: model, text: NSColor(rift: theme[.contentSecondary]),
+			highlight: NSColor(rift: theme[.terminalAnsi2]))
 			.overlay(alignment: .topTrailing) {
 				if model.scrollersHidden {
 					Text("scroller hidden").font(.system(size: 9, weight: .bold)).textCase(
@@ -312,6 +326,8 @@ final class LogModel {
 
 struct LogView: NSViewRepresentable {
 	let model: LogModel
+	let text: NSColor
+	let highlight: NSColor
 
 	func makeNSView(context: Context) -> LogScrollView {
 		let view = LogScrollView(model: model)
@@ -319,7 +335,9 @@ struct LogView: NSViewRepresentable {
 		return view
 	}
 
-	func updateNSView(_ view: LogScrollView, context: Context) {}
+	func updateNSView(_ view: LogScrollView, context: Context) {
+		view.setColors(text: text, highlight: highlight)
+	}
 
 	static func dismantleNSView(_ view: LogScrollView, coordinator: ()) { view.stop() }
 }
@@ -329,6 +347,17 @@ final class LogScrollView: NSScrollView, RiftScrollerSuppressing {
 	private let textView = NSTextView()
 	private var timer: Timer?
 	private var line = 0
+	private var textColor: NSColor = .secondaryLabelColor
+	private var highlightColor: NSColor = .systemGreen
+
+	func setColors(text: NSColor, highlight: NSColor) {
+		guard text != textColor || highlight != highlightColor else { return }
+		textColor = text
+		highlightColor = highlight
+		let storage = textView.textStorage
+		storage?.addAttribute(
+			.foregroundColor, value: text, range: NSRange(location: 0, length: storage?.length ?? 0))
+	}
 	private static let events = [
 		"layout settled", "divider moved", "pane focused", "split right", "zoom toggled",
 		"pane swapped", "surface updated", "window resized",
@@ -371,7 +400,7 @@ final class LogScrollView: NSScrollView, RiftScrollerSuppressing {
 				string: text,
 				attributes: [
 					.font: NSFont.monospacedSystemFont(ofSize: 10, weight: .regular),
-					.foregroundColor: NSColor.secondaryLabelColor,
+					.foregroundColor: line % 4 == 0 ? highlightColor : textColor,
 				]))
 		textView.scrollToEndOfDocument(nil)
 	}

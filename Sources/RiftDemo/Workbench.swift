@@ -14,15 +14,21 @@ struct WorkbenchSettings: Equatable {
 	var look = Look.comfortable
 	var motion = RiftAnimationStyle.snappy
 	var transition = RiftPaneTransitionKind.popIn
-	var border = RiftFocusBorderTransition.glide
+	var border = RiftFocusBorderTransition.crossfade
 	var gradientBorder = true
 	var unfocusedFade = RiftInactivePaneFade.both
 	var contentSizing = RiftPaneContentSizing.followsSurface
 	var autoBalance = false
 	var sidebarPosition = RiftSidebarPosition.left
-	var keepsWindowWidth = false
+	var keepsWindowWidth = true
 	var swipe = RiftSidebarSwipe.swipe
 	var borderColor = RiftFocusBorderColor.accent
+	/// "auto" (Paper in light mode, Graphite in dark), or a built-in theme's ID.
+	var themeID = "auto"
+
+	var theme: RiftThemeSelection {
+		RiftTheme.builtIn.first { $0.id == themeID }.map { RiftThemeSelection($0) } ?? .standard
+	}
 	var asksBeforeClosingBusyPanes = true
 
 	var density: RiftChromeDensity { look == .compact ? .compact : .comfortable }
@@ -40,6 +46,7 @@ struct WorkbenchSettings: Equatable {
 			c.dividerColor = .clear
 		}
 		c.windowStyle = .headless
+		c.theme = theme
 		c.titlebarMetrics = .sidebar(density)
 		c.focusBorderPreset = borderColor
 		c.animationStyle = motion
@@ -64,6 +71,7 @@ struct WorkbenchActions {
 	var swap: (RiftDirection) -> Void
 	var balance: () -> Void
 	var toggleSidebar: () -> Void
+	var setTheme: (String) -> Void
 }
 
 struct WorkbenchActionsKey: FocusedValueKey { typealias Value = WorkbenchActions }
@@ -111,7 +119,8 @@ struct WorkbenchWindow: View {
 					actions.balance()
 				},
 			],
-			toggleShortcut: "⌥⌘S"
+			toggleShortcut: "⌥⌘S",
+			theme: settings.theme
 		) {
 			Navigator(
 				layout: layout, focused: $focused, zoomed: zoomed, settings: $settings,
@@ -136,12 +145,26 @@ struct WorkbenchWindow: View {
 				ToolPane(pane: pane, isTranslucent: settings.look != .plain, activity: activity)
 			}
 		}
+		.background {
+			// The window's canvas, behind the surfaces.
+			RiftThemeReader { theme in Color(rift: theme[.canvas]) }
+				.environment(\.riftThemeSelection, settings.theme)
+		}
+		.preferredColorScheme(preferredScheme)
 		.ignoresSafeArea()
 		.frame(minHeight: 420)
 		.focusedSceneValue(\.workbench, actions)
 		.onChange(of: layout == nil) { _, isEmpty in
 			if isEmpty { NSApp.keyWindow?.close() }
 		}
+	}
+
+	/// A single (non-automatic) theme sets the window's appearance to match it.
+	private var preferredScheme: ColorScheme? {
+		guard let theme = RiftTheme.builtIn.first(where: { $0.id == settings.themeID }) else {
+			return nil
+		}
+		return theme.appearance == .dark ? .dark : .light
 	}
 
 	private var actions: WorkbenchActions {
@@ -156,7 +179,8 @@ struct WorkbenchWindow: View {
 			focus: { controller.moveFocus($0) },
 			swap: { controller.swap(toward: $0) },
 			balance: { controller.balance() },
-			toggleSidebar: { sidebarCollapsed.toggle() })
+			toggleSidebar: { sidebarCollapsed.toggle() },
+			setTheme: { settings.themeID = $0 })
 	}
 }
 
@@ -198,6 +222,13 @@ struct RiftWorkbenchApp: App {
 				ForEach(Self.directions, id: \.0) { name, direction, key in
 					Button("Swap \(name)") { actions?.swap(direction) }
 						.keyboardShortcut(key, modifiers: [.command, .control])
+				}
+			}
+			CommandMenu("Theme") {
+				Button("Automatic") { actions?.setTheme("auto") }
+				Divider()
+				ForEach(RiftTheme.builtIn) { theme in
+					Button(theme.name) { actions?.setTheme(theme.id) }
 				}
 			}
 			CommandGroup(after: .sidebar) {

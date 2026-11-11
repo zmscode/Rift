@@ -260,7 +260,11 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 
 	/// Builds (when the provider changed) and updates a pane's surface, and sets its content alpha.
 	private func applySurface(to container: RiftPaneContainerView) {
-		let provider = configuration.paneSurface?.provider
+		var provider = configuration.paneSurface?.provider
+		// A theme tints the built-in surfaces with its canvas colour.
+		if let theme = configuration.theme, let surfaces = provider as? RiftPaneSurfaces {
+			provider = surfaces.themed(theme)
+		}
 		if let surfaces = provider as? RiftPaneSurfaces {
 			if container.surfaceSource != surfaces || container.surfaceView == nil {
 				container.setSurfaceView(surfaces.makeSurfaceView())
@@ -306,7 +310,7 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 
 	private func applyFocusBorderStyle() {
 		let base = (configuration.focusBorderColor
-			?? configuration.colorPalette.color(configuration.focusBorderPreset))
+			?? themedPalette.color(configuration.focusBorderPreset))
 			.withAlphaComponent(configuration.focusBorderOpacity)
 		let active = window?.isKeyWindow ?? true
 		let color =
@@ -332,11 +336,16 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 
 	private func applyConfiguration() {
 		containers.values.forEach(applyConfiguration(to:))
-		dropIndicator.color = configuration.dropIndicatorColor
+		let dropColor =
+			configuration.dropIndicatorColor
+			?? configuration.theme.map { NSColor.rift(.accent, in: $0) }
+		dropIndicator.color = dropColor
 		dropIndicator.cornerRadius = configuration.dropIndicatorCornerRadius
-		dropOverlay.indicator.color = configuration.dropIndicatorColor
+		dropOverlay.indicator.color = dropColor
 		dropOverlay.indicator.cornerRadius = configuration.dropIndicatorCornerRadius
-		windowSurfaceView.surface = configuration.windowSurface
+		windowSurfaceView.surface = configuration.theme.flatMap { theme in
+			configuration.windowSurface?.themed(theme)
+		} ?? configuration.windowSurface
 		applyFocusBorderStyle()
 		applyWindowFade()
 		updateTrackingArea()
@@ -628,7 +637,7 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 			)
 		}
 		dividerLines.show(
-			lines, color: configuration.dividerColor, blendMode: configuration.dividerBlendMode)
+			lines, color: themedDividerColor, blendMode: configuration.dividerBlendMode)
 	}
 
 	// MARK: Commands
@@ -1114,6 +1123,25 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 		guard !borderGlides, let pane = borderPane, let target = containers[pane] else { return }
 		focusOverlay.frame = target.frame
 		if target.isHidden { updateFocusBorder(animated: false) }
+	}
+
+	/// The border presets' colours: the theme's when there is one, else `colorPalette`.
+	private var themedPalette: RiftColorPalette {
+		configuration.theme.map { RiftColorPalette(theme: $0) } ?? configuration.colorPalette
+	}
+
+	/// Divider lines take the theme's text colour at the configured colour's opacity.
+	private var themedDividerColor: NSColor {
+		guard let theme = configuration.theme else { return configuration.dividerColor }
+		let base = configuration.dividerColor
+		return NSColor(name: nil) { appearance in
+			var alpha: CGFloat = 1
+			appearance.performAsCurrentDrawingAppearance {
+				alpha = base.usingColorSpace(.sRGB)?.alphaComponent ?? 1
+			}
+			let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+			return NSColor(rift: theme.theme(isDark: dark)[.content]).withAlphaComponent(alpha)
+		}
 	}
 
 	/// Per-corner radii for a border at `frame`: the pane radius, except corners that meet the

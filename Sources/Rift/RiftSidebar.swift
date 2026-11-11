@@ -59,12 +59,19 @@ open class RiftSidebarContainerView: NSView {
 		}
 	}
 	public private(set) var isCollapsed = false
-	/// Keep the window's width when folding; the content takes the space instead.
-	public var preservesWindowWidth = false
+	/// Keep the window's width when folding; the content takes the space instead. Off shrinks
+	/// and grows the window by the sidebar's width.
+	public var preservesWindowWidth = true
 	/// The curve folds run on (`nil` folds at once). Reduce Motion folds at once too.
 	public var foldCurve: RiftMotionCurve? = RiftAnimationStyle.snappy.chromeCurve
 	public var swipe: RiftSidebarSwipe = .swipe
 	public var hidesToggleButton = false { didSet { relayout() } }
+	/// Colours the sidebar's chrome: its background (the theme's sidebar colour), the toggle and
+	/// buttons (its text colour) and the compact divider (its subtle line colour). `nil` leaves
+	/// the background clear and uses the system colours.
+	public var theme: RiftThemeSelection? { didSet { applyTheme() } }
+	private let themedBackground = CALayer()
+
 	/// The toggle's keyboard shortcut as text (for example "⌥⌘S"), shown in its tooltip.
 	public var toggleShortcut: String? { didSet { relayout() } }
 	/// Keep the window from being resized narrower than `windowMinimumWidth` (and widen it if it
@@ -325,6 +332,41 @@ open class RiftSidebarContainerView: NSView {
 		}
 	}
 
+	// MARK: Theme
+
+	private func applyTheme() {
+		let foreground: NSColor = theme.map { NSColor.rift(.content, in: $0) } ?? .labelColor
+		for button in [toggleButton, moreButton] + accessoryButtons {
+			button.foregroundColor = foreground
+		}
+		if let theme { dividerColor = NSColor.rift(.strokeSubtle, in: theme) }
+		updateThemedBackground()
+		relayout()
+	}
+
+	private func updateThemedBackground() {
+		guard let theme else {
+			themedBackground.isHidden = true
+			return
+		}
+		if themedBackground.superlayer == nil {
+			sidebarPanel.layer?.insertSublayer(themedBackground, at: 0)
+		}
+		themedBackground.isHidden = false
+		var color: CGColor?
+		effectiveAppearance.performAsCurrentDrawingAppearance {
+			color = NSColor.rift(.sidebar, in: theme).cgColor
+		}
+		themedBackground.backgroundColor = color
+		themedBackground.frame = sidebarPanel.bounds
+	}
+
+	open override func viewDidChangeEffectiveAppearance() {
+		super.viewDidChangeEffectiveAppearance()
+		updateThemedBackground()
+		relayout()
+	}
+
 	// MARK: Title row buttons
 
 	private func rebuildAccessories() {
@@ -337,6 +379,7 @@ open class RiftSidebarContainerView: NSView {
 			button.tag = index
 			button.target = self
 			button.action = #selector(runAccessory(_:))
+			if let theme { button.foregroundColor = NSColor.rift(.content, in: theme) }
 			sidebarPanel.addSubview(button)
 			return button
 		}
@@ -440,6 +483,7 @@ open class RiftSidebarContainerView: NSView {
 		let sidebarX = position == .left ? 0 : bounds.width - w
 		sidebarPanel.frame = CGRect(x: sidebarX, y: 0, width: w, height: bounds.height)
 		sidebarView.frame = sidebarPanel.bounds
+		themedBackground.frame = sidebarPanel.bounds
 		titleRow.frame = CGRect(x: 0, y: 0, width: w, height: titleRowHeight)
 		revealMask.frame =
 			position == .left

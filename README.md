@@ -43,7 +43,7 @@ A split-pane layout component for macOS. Use it from SwiftUI with `RiftLayoutVie
 - **Sidebar:** `RiftSidebarContainerView` (SwiftUI: `RiftSidebarSplitView`) puts a sidebar on the left or right of your content.
     - 240pt wide by default; drag its inner edge to resize it between 167pt and 60% of the window (at most 480pt).
     - Fold it with its toggle button (28×28 beside the window buttons: the `sidebar.left` or `sidebar.right` symbol at 13pt, in the label colour at 70% until hovered and 32% when disabled, with a round hover background at 8% of that colour (7.5% in light mode) that fades in over 0.14s; `toggleShortcut` adds the shortcut to its tooltip), `toggleSidebar()`, or a two-finger swipe toward its side (44pt, mostly sideways; `swipe` can require ⌥ or turn it off). The fold runs on the chrome curve: the sidebar stays put and a mask covers it as the content slides over.
-    - Folding shrinks the window by the sidebar's width (never below 480pt, or 720pt minus the sidebar) and unfolding grows it back, so the panes keep their size. With `preservesWindowWidth` the content takes the space instead, and layouts inside are told before it starts.
+    - By default the window keeps its width and the content takes the space (layouts inside are told before it starts). With `preservesWindowWidth` off, folding shrinks the window by the sidebar's width (never below 480pt, or 720pt minus the sidebar) and unfolding grows it back, so the panes keep their size.
     - A window that already fills its screen (within 64pt of its width) keeps its width when folding. Folds take the curve's settling time (0.3s for a bezier) and are skipped while the window is hidden or covered. Once folded, the sidebar fades out over 0.16s and is hidden.
     - The window's minimum width follows the sidebar (720pt open; less once a fold has shrunk it), and a narrower window is widened (`managesWindowMinimumWidth`).
     - Right-clicking the toggle shows a menu for the side (Left Side, Right Side) and density (Comfortable, Compact) when you handle `onPositionChange` / `onDensityChange`.
@@ -75,6 +75,11 @@ A split-pane layout component for macOS. Use it from SwiftUI with `RiftLayoutVie
   - Each surface has a style per state (pane, focused pane, and both again for background windows) and per appearance. A style stacks shadows, a backdrop, glass, two fills and strokes, and sets the content's opacity.
   - For your own surface, adopt `RiftPaneSurfaceProviding`: make a view, update it for each state, and give the content opacity.
   - Content must be partly transparent for a glass surface to show.
+- **Themes:** `RiftTheme` builds a full set of colour roles (about 70: canvas, surfaces, sidebar, text, lines, controls, selection, accent and status colours with their solid, container and border forms, and the terminal colours) from a terminal-style palette: background, foreground, cursor (the accent), selection and the 16 ANSI colours.
+    - Surfaces, lines and secondary text are the background with its OKLCH lightness moved toward the foreground's; containers mix the background toward their colour in OKLab; controls and dimmed accents are translucent overlays.
+    - Eight built-in themes (Graphite, Harbor, Ember, Nightshade, Paper, Sea Glass, Dune, Frost); load more from JSON with `RiftTheme.load(from:)`, override any role, and pair a light and a dark theme with `RiftThemeSelection`.
+    - Set `configuration.theme`: the built-in surfaces' tints take the theme's canvas, the border presets its accent and terminal colours, divider lines its text colour, and the drop highlight its accent. The sidebar's `theme` colours its background, buttons and divider.
+    - Pane content gets the theme in the SwiftUI environment (`riftThemeSelection`, or `RiftThemeReader { theme in … }`); `NSColor.rift(_:in:)` and `Color(rift:)` turn roles into colours.
 - **Accessibility:** each divider is an adjustable `AXSplitter`. Increment and decrement move it by 5%.
 - **Reduce Motion:** animations are skipped when the system setting is on.
 

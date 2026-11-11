@@ -61,6 +61,8 @@ public struct RiftPaneContext<PaneID: Hashable & Sendable> {
 @Observable
 final class RiftPaneModel<PaneID: Hashable & Sendable> {
 	var context: RiftPaneContext<PaneID>
+	/// The theme pane content reads from the environment.
+	var themeSelection: RiftThemeSelection?
 	init(_ context: RiftPaneContext<PaneID>) { self.context = context }
 }
 
@@ -70,7 +72,11 @@ struct RiftPaneRoot<PaneID: Hashable & Sendable, Content: View>: View {
 	let content: (RiftPaneContext<PaneID>) -> Content
 	// Rift sets each pane's insets itself, so the window's safe area (the titlebar) must not
 	// push pane content down.
-	var body: some View { content(model.context).ignoresSafeArea() }
+	var body: some View {
+		content(model.context)
+			.environment(\.riftThemeSelection, model.themeSelection)
+			.ignoresSafeArea()
+	}
 }
 
 /// Hosts a pane's SwiftUI content inside the native layout and forwards presentation changes.
@@ -99,6 +105,10 @@ final class RiftHostedPane<PaneID: Hashable & Sendable>: NSHostingView<AnyView>,
 			presentation: presentation)
 	}
 
+	func setTheme(_ selection: RiftThemeSelection?) {
+		if model.themeSelection != selection { model.themeSelection = selection }
+	}
+
 	func setFocused(_ focused: Bool, label: String) {
 		let old = model.context
 		guard old.isFocused != focused || old.accessibilityLabel != label else { return }
@@ -123,7 +133,7 @@ public struct RiftLayoutView<PaneID: Hashable & Sendable, Content: View>: NSView
 	@Binding private var layout: RiftLayout<PaneID>?
 	@Binding private var focusedPane: PaneID?
 	private let zoomedPane: Binding<PaneID?>?
-	private let configuration: RiftConfiguration
+	fileprivate let configuration: RiftConfiguration
 	private let controller: RiftController<PaneID>?
 	private let title: ((PaneID) -> String)?
 	private let onLayoutSettled: (() -> Void)?
@@ -240,6 +250,7 @@ public struct RiftLayoutView<PaneID: Hashable & Sendable, Content: View>: NSView
 			guard let pane = view.contentView(for: id) as? RiftHostedPane<PaneID> else { continue }
 			let label = coordinator.parent.title?(id) ?? String(describing: id)
 			pane.setFocused(view.focusedPane == id, label: label)
+			pane.setTheme(coordinator.parent.configuration.theme)
 		}
 	}
 }
@@ -288,6 +299,7 @@ public struct RiftSidebarSplitView<Sidebar: View, Content: View>: NSViewRepresen
 	private let onDensityChange: ((RiftChromeDensity) -> Void)?
 	private let accessories: [RiftSidebarAccessory]
 	private let toggleShortcut: String?
+	private let theme: RiftThemeSelection?
 	private let sidebar: Sidebar
 	private let content: Content
 
@@ -306,7 +318,7 @@ public struct RiftSidebarSplitView<Sidebar: View, Content: View>: NSViewRepresen
 		width: Binding<CGFloat> = .constant(RiftSidebarMath.defaultWidth),
 		position: RiftSidebarPosition = .left,
 		density: RiftChromeDensity = .comfortable,
-		preservesWindowWidth: Bool = false,
+		preservesWindowWidth: Bool = true,
 		swipe: RiftSidebarSwipe = .swipe,
 		animationStyle: RiftAnimationStyle = .snappy,
 		hidesToggleButton: Bool = false,
@@ -315,6 +327,7 @@ public struct RiftSidebarSplitView<Sidebar: View, Content: View>: NSViewRepresen
 		onDensityChange: ((RiftChromeDensity) -> Void)? = nil,
 		accessories: [RiftSidebarAccessory] = [],
 		toggleShortcut: String? = nil,
+		theme: RiftThemeSelection? = nil,
 		@ViewBuilder sidebar: () -> Sidebar,
 		@ViewBuilder content: () -> Content
 	) {
@@ -331,6 +344,7 @@ public struct RiftSidebarSplitView<Sidebar: View, Content: View>: NSViewRepresen
 		self.onDensityChange = onDensityChange
 		self.accessories = accessories
 		self.toggleShortcut = toggleShortcut
+		self.theme = theme
 		self.sidebar = sidebar()
 		self.content = content()
 	}
@@ -378,12 +392,14 @@ public struct RiftSidebarSplitView<Sidebar: View, Content: View>: NSViewRepresen
 		AnyView(
 			sidebar
 				.environment(\.riftSidebarTitleRowHeight, RiftSidebarMath.titleRowHeight(density: density))
+				.environment(\.riftThemeSelection, theme)
 				.ignoresSafeArea())
 	}
 
 	private func apply(to view: RiftSidebarContainerView) {
 		view.accessories = accessories
 		if view.toggleShortcut != toggleShortcut { view.toggleShortcut = toggleShortcut }
+		if view.theme != theme { view.theme = theme }
 		if view.position != position { view.position = position }
 		if view.density != density { view.density = density }
 		view.preservesWindowWidth = preservesWindowWidth

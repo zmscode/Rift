@@ -57,6 +57,11 @@ public struct RiftConfiguration: Equatable {
 	/// opaque the content is per state. `nil` (the default) draws nothing; content draws its own
 	/// background. Use `RiftPaneSurfaces.modern(_:)` or your own `RiftPaneSurfaceProviding`.
 	public var paneSurface: RiftPaneSurface?
+	/// Colours for everything Rift draws: the built-in surfaces' tints take the theme's canvas,
+	/// the border presets its accent and terminal colours, divider lines its text colour, the drop
+	/// highlight its accent. Pane content gets it in the SwiftUI environment
+	/// (`riftThemeSelection`, or `RiftThemeReader`). `nil` uses the system colours.
+	public var theme: RiftThemeSelection?
 	/// The surface behind the whole layout (window material, tint, inner shadow). `nil` draws none.
 	public var windowSurface: RiftWindowSurface?
 	/// What an unfocused pane loses: its surface look (`styling`), its content opacity (`text`),
@@ -104,7 +109,7 @@ public struct RiftConfiguration: Equatable {
 	public var colorPalette = RiftColorPalette()
 	public var focusBorderWidth: CGFloat = 2
 	/// How the focus border gets from one pane to the next.
-	public var focusBorderTransition: RiftFocusBorderTransition = .glide
+	public var focusBorderTransition: RiftFocusBorderTransition = .crossfade
 	/// Multiplies the focus border's opacity while the window isn't key.
 	public var inactiveWindowFocusBorderOpacity: CGFloat = 0.35
 	/// Opacity of the focus border (before the inactive-window factor).

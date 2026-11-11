@@ -20,6 +20,18 @@ struct Navigator: View {
 				VStack(alignment: .leading, spacing: 14) {
 					openPanes
 					newTools
+					group("Theme") {
+						Picker("", selection: $settings.themeID) {
+							Text("Automatic").tag("auto")
+							Divider()
+							ForEach(RiftTheme.builtIn) { theme in
+								Text("\(theme.name) (\(theme.appearance.rawValue))").tag(theme.id)
+							}
+						}
+						.pickerStyle(.menu)
+						.labelsHidden()
+						themeStrip
+					}
 					group("Look") {
 						segmented($settings.look, WorkbenchSettings.Look.allCases) { $0.rawValue }
 						labelled("Motion") {
@@ -132,9 +144,23 @@ struct Navigator: View {
 		}
 	}
 
+	/// A strip of the current theme's colours.
+	private var themeStrip: some View {
+		RiftThemeReader { theme in
+			HStack(spacing: 2) {
+				ForEach(
+					[RiftColorRole.canvas, .surfaceRaised, .content, .accent, .danger, .success, .warning,
+					 .info], id: \.self
+				) { role in
+					RoundedRectangle(cornerRadius: 2).fill(Color(rift: theme[role])).frame(height: 10)
+				}
+			}
+		}
+	}
+
 	/// The named border colours, as swatches.
 	private var swatches: some View {
-		let palette = RiftColorPalette()
+		let palette = RiftColorPalette(theme: settings.theme)
 		return LazyVGrid(columns: [GridItem(.adaptive(minimum: 16, maximum: 16), spacing: 6)], spacing: 6) {
 			ForEach(RiftFocusBorderColor.allCases, id: \.self) { name in
 				Button {
