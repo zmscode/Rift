@@ -8,8 +8,6 @@ final class RiftPaneDragSession<PaneID: Hashable & Sendable> {
 	private weak var source: RiftView<PaneID>?
 	private let pane: PaneID
 	private let panel: NSPanel
-	/// Where the pointer sits inside the preview, as a fraction of its size (y down).
-	private let grabFraction: CGPoint
 	private var current: (view: RiftView<PaneID>, target: RiftDropTarget<PaneID>)?
 
 	init?(source: RiftView<PaneID>, pane: PaneID, grabPoint: CGPoint) {
@@ -18,9 +16,6 @@ final class RiftPaneDragSession<PaneID: Hashable & Sendable> {
 		}
 		self.source = source
 		self.pane = pane
-		grabFraction = CGPoint(
-			x: min(max((grabPoint.x - frame.minX) / frame.width, 0), 1),
-			y: min(max((grabPoint.y - frame.minY) / frame.height, 0), 1))
 
 		let maxSize = source.configuration.dragPreviewMaxSize
 		let scale = min(1, maxSize.width / frame.width, maxSize.height / frame.height)
@@ -37,8 +32,7 @@ final class RiftPaneDragSession<PaneID: Hashable & Sendable> {
 		panel.level = .floating
 		panel.ignoresMouseEvents = true
 		panel.isReleasedWhenClosed = false
-		panel.collectionBehavior = [.canJoinAllSpaces, .transient, .ignoresCycle]
-		panel.alphaValue = 0.9
+		panel.collectionBehavior = [.transient, .ignoresCycle]
 
 		let imageView = NSImageView(frame: CGRect(origin: .zero, size: size))
 		imageView.image = source.snapshot(of: pane)
@@ -56,10 +50,9 @@ final class RiftPaneDragSession<PaneID: Hashable & Sendable> {
 
 	func move(to screenPoint: CGPoint) {
 		let size = panel.frame.size
-		// Screen coordinates have y up; the preview's grab point is measured from its top.
-		let origin = CGPoint(
-			x: screenPoint.x - grabFraction.x * size.width,
-			y: screenPoint.y + grabFraction.y * size.height - size.height)
+		// The preview hangs below and to the right of the pointer, 12pt away on each axis
+		// (screen coordinates have y up).
+		let origin = CGPoint(x: screenPoint.x + 12, y: screenPoint.y - size.height - 12)
 		panel.setFrameOrigin(origin)
 		if !panel.isVisible { panel.orderFront(nil) }
 

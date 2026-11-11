@@ -63,6 +63,7 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 	private var borderPane: PaneID?
 	private var borderGlides = false
 	private var keyObservers: [NSObjectProtocol] = []
+	private var pinch = RiftPinchRecognizer()
 	private static var borderTrack: AnyHashable { "rift.focusBorder" }
 	private static var layoutTrack: AnyHashable { "rift.layout" }
 
@@ -222,7 +223,8 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 	}
 
 	private func applyFocusBorderStyle() {
-		let base = configuration.focusBorderColor ?? .controlAccentColor
+		let base = (configuration.focusBorderColor ?? .controlAccentColor)
+			.withAlphaComponent(configuration.focusBorderOpacity)
 		let active = window?.isKeyWindow ?? true
 		let color = active
 			? base
@@ -524,6 +526,23 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 			let next = layout.swapping(id, other)
 		else { return false }
 		commit(next, reason: .move, animated: true)
+		return true
+	}
+
+	/// Closes every pane except `pane` (default: focused), which keeps focus.
+	@discardableResult
+	public func closeOthers(_ pane: PaneID? = nil) -> Bool {
+		guard let keep = pane ?? focusedStorage, let layout = paneLayout, layout.contains(keep),
+			layout.paneCount > 1
+		else { return false }
+		let closed = layout.paneIDs.filter { $0 != keep }
+		for id in closed {
+			if let container = containers.removeValue(forKey: id) { fadeOutAndRemove(container) }
+		}
+		setZoom(nil)
+		commit(.pane(keep), reason: .close, animated: true)
+		setFocus(keep, notify: true, makeFirstResponder: true)
+		closed.forEach { onPaneClosed?($0) }
 		return true
 	}
 
@@ -1018,6 +1037,24 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 	}
 
 	open override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+	/// Spread two fingers over a pane to zoom it; pinch to restore the layout.
+	open override func magnify(with event: NSEvent) {
+		guard configuration.allowsPinchToZoom else {
+			super.magnify(with: event)
+			return
+		}
+		if event.phase.contains(.began) { pinch.begin() }
+		switch pinch.update(magnification: Double(event.magnification)) {
+		case .spread?:
+			let point = convert(event.locationInWindow, from: nil)
+			if zoomedPane == nil, let pane = displayGeometry().pane(at: point) { setZoom(pane) }
+		case .pinch?:
+			if zoomedPane != nil { setZoom(nil) }
+		case nil:
+			break
+		}
+	}
 	open override var mouseDownCanMoveWindow: Bool { false }
 
 	private func cursor(for hit: RiftDividerHit, at point: CGPoint? = nil) -> NSCursor {
@@ -1057,7 +1094,7 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 			super.mouseDown(with: event)
 			return
 		}
-		if event.clickCount == 2 {
+		if event.clickCount == 2, configuration.doubleClickCentersDivider {
 			// Double-click centers the divider(s).
 			let updates = hit.dividers.map { RiftDividerUpdate(splitID: $0.splitID, position: 0.5) }
 			placedDividers.subtract(updates.map(\.splitID))
@@ -1224,18 +1261,10 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 			dropIndicator.isHidden = true
 			return
 		}
-		if dropIndicator.isHidden || !shouldAnimate {
-			dropIndicator.frame = rect
-			dropIndicator.isHidden = false
-			dropIndicator.needsDisplay = true
-		} else if dropIndicator.frame != rect {
-			NSAnimationContext.runAnimationGroup { context in
-				context.duration = 0.12
-				context.allowsImplicitAnimation = true
-				dropIndicator.animator().frame = rect
-			}
-			dropIndicator.needsDisplay = true
-		}
+		// The highlight jumps straight to each new zone.
+		dropIndicator.frame = rect
+		dropIndicator.isHidden = false
+		dropIndicator.needsDisplay = true
 	}
 
 	func setDragging(_ pane: PaneID?) {
@@ -1312,6 +1341,7 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 				element.label =
 					"Divider between \(title(for: split.first.lastPaneID)) and \(title(for: split.second.firstPaneID))"
 			}
+			element.setAccessibilityHelp("Swipe up or down to resize panes.")
 			element.setAccessibilityParent(self)
 			element.setAccessibilityFrameInParentSpace(
 				divider.hitRect(thickness: configuration.metrics.dividerHitThickness))
@@ -1322,6 +1352,18 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 			elements[divider.splitID] = element
 		}
 		dividerElements = elements
+		// Each pane offers actions to swap it with its neighbour in each direction.
+		for (id, container) in containers {
+			container.setAccessibilityCustomActions(
+				[RiftDirection.left, .right, .up, .down].compactMap { direction in
+					guard layout.swapNeighbor(of: id, toward: direction, in: bounds, metrics: effectiveMetrics) != nil
+					else { return nil }
+					let name = "Move \(String(describing: direction).capitalized)"
+					return NSAccessibilityCustomAction(name: name) { [weak self] in
+						MainActor.assumeIsolated { self?.swap(id, toward: direction) ?? false }
+					}
+				})
+		}
 	}
 
 	private func adjustDivider(_ id: UUID, steps: Double) -> Bool {

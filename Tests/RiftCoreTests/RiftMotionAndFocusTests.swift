@@ -147,6 +147,27 @@ import Testing
 	}
 }
 
+@Suite struct PinchTests {
+	@Test func spreadAndPinchThresholds() {
+		var r = RiftPinchRecognizer()
+		r.begin()
+		#expect(r.update(magnification: 0.1) == nil)  // 1.1
+		#expect(r.update(magnification: 0.1) == nil)  // 1.21
+		#expect(r.update(magnification: 0.04) == .spread)  // 1.258
+		#expect(r.update(magnification: 0.5) == nil)  // once per gesture
+		r.begin()
+		#expect(r.update(magnification: -0.1) == nil)  // 0.9
+		#expect(r.update(magnification: -0.12) == .pinch)  // 0.792
+	}
+
+	@Test func scaleNeverCollapses() {
+		var r = RiftPinchRecognizer()
+		r.begin()
+		#expect(r.update(magnification: -5) == .pinch)
+		#expect(r.scale == 0.01)
+	}
+}
+
 @Suite struct MotionTests {
 	@Test func snappyIsCriticallyDamped() {
 		guard case .spring(let spring) = RiftMotionCurve.snappy.shape else {

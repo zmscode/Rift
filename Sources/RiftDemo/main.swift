@@ -390,8 +390,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 		])
 		bar.buttons([
 			("Reset", { [unowned self] in rift.setLayout(startingLayout(), animated: true) }),
-			("New window", { [unowned self] in newWindow(nil) }),
+			("Close others", { rift.closeOthers() }),
 		])
+		bar.buttons([("New window", { [unowned self] in newWindow(nil) })])
 
 		bar.section(
 			"Focus", "Nearest top-left corner among panes wholly past the edge. Closing a pane focuses the one before it.")
@@ -404,7 +405,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 		bar.section("Resize", "Moves the divider on that side.")
 		bar.arrows { rift.resize(toward: $0) }
 
-		bar.section("Balance & zoom", "Balance counts a split across the axis as one slot.")
+		bar.section(
+			"Balance & zoom",
+			"Balance counts a split across the axis as one slot. Spread two fingers over a pane to zoom it; pinch to restore.")
 		bar.buttons([("Balance", { rift.balance() }), ("Zoom", { rift.toggleZoom() })])
 		bar.toggle("Auto-balance on split and close", isOn: rift.configuration.autoBalance) { on in
 			configure { $0.autoBalance = on }
@@ -423,6 +426,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 			configure { $0.showsFocusBorder = on }
 		}
 
+		bar.section("Density", "Comfortable: 8pt gaps, rounded cards. Compact: touching panes with 1pt lines.")
+		bar.segmented(["Demo", "Comfortable", "Compact"], selected: 0) { index in
+			configure {
+				switch index {
+				case 1:
+					$0.metrics.dividerThickness = 8
+					$0.showsDividerLines = false
+					$0.paneCornerRadius = 10
+					$0.dropIndicatorCornerRadius = 8
+				case 2:
+					$0.metrics.dividerThickness = 1
+					$0.showsDividerLines = true
+					$0.dividerColor = NSColor.separatorColor.withAlphaComponent(0.7)
+					$0.paneCornerRadius = 0
+					$0.dropIndicatorCornerRadius = 0
+				default:
+					$0.metrics.dividerThickness = 4
+					$0.dividerColor = .clear
+					$0.paneCornerRadius = 6
+					$0.dropIndicatorCornerRadius = 8
+				}
+			}
+		}
+
 		bar.section("Panes")
 		bar.toggle("Fade unfocused panes", isOn: rift.configuration.inactivePaneAlpha < 1) { on in
 			configure {
@@ -437,6 +464,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 		) { on in configure { $0.hidesScrollersDuringStructuralChanges = on } }
 		bar.toggle("Middle of a pane swaps on drop", isOn: rift.configuration.allowsCenterDrop) { on in
 			configure { $0.allowsCenterDrop = on }
+		}
+		bar.toggle("Double-click a divider to centre it", isOn: rift.configuration.doubleClickCentersDivider) { on in
+			configure { $0.doubleClickCentersDivider = on }
+		}
+		bar.toggle("Pinch to zoom", isOn: rift.configuration.allowsPinchToZoom) { on in
+			configure { $0.allowsPinchToZoom = on }
 		}
 		bar.toggle("Glass", isOn: false) { on in
 			configure {

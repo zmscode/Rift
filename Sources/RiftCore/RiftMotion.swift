@@ -241,3 +241,40 @@ public struct RiftPanePopIn: Hashable, Sendable {
 			fadeOut: RiftMotionTiming(duration: timeScale * 0.146, curve: .fade))
 	}
 }
+
+/// Recognises a two-finger spread or pinch from magnify events.
+///
+/// The scale starts at 1 and is multiplied by `max(1 + magnification, 0.01)` for each event. At
+/// 1.25 or more it is a spread; at 0.8 or less, a pinch. Each gesture is recognised at most once.
+public struct RiftPinchRecognizer: Sendable {
+	public enum Gesture: Sendable, Equatable {
+		case spread
+		case pinch
+	}
+
+	public private(set) var scale: Double = 1
+	private var hasRecognized = false
+
+	public init() {}
+
+	/// Starts a new gesture.
+	public mutating func begin() {
+		scale = 1
+		hasRecognized = false
+	}
+
+	/// Feeds one event's magnification; returns the gesture the first time one is recognised.
+	public mutating func update(magnification: Double) -> Gesture? {
+		guard !hasRecognized else { return nil }
+		scale *= max(1 + magnification, 0.01)
+		if scale >= 1.25 {
+			hasRecognized = true
+			return .spread
+		}
+		if scale <= 0.8 {
+			hasRecognized = true
+			return .pinch
+		}
+		return nil
+	}
+}

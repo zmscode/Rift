@@ -87,6 +87,8 @@ public struct RiftConfiguration {
 	public var focusBorderTransition: RiftFocusBorderTransition = .glide
 	/// Multiplies the focus border's opacity while the window isn't key.
 	public var inactiveWindowFocusBorderOpacity: CGFloat = 0.35
+	/// Opacity of the focus border (before the inactive-window factor).
+	public var focusBorderOpacity: CGFloat = 1
 	/// Alpha applied to the content of panes that don't have focus (1 = no fading).
 	public var inactivePaneAlpha: CGFloat = 0.7
 	/// Content alpha while the window isn't key, for the focused pane and for the others.
@@ -97,6 +99,11 @@ public struct RiftConfiguration {
 	/// (`structuralActivity` is not empty), so they don't flash.
 	public var hidesScrollersDuringStructuralChanges = true
 	public var focusFollowsMouse = false
+
+	/// Double-clicking a divider centres it. Off by default.
+	public var doubleClickCentersDivider = false
+	/// Spreading two fingers over a pane zooms it; pinching restores the layout.
+	public var allowsPinchToZoom = true
 
 	// Pane drag and drop
 	public var allowsPaneDragging = true
@@ -154,4 +161,28 @@ public enum RiftFocusBorderTransition: String, Sendable, Hashable, CaseIterable 
 	case crossfade
 	/// The border jumps.
 	case off
+}
+
+extension RiftConfiguration {
+	/// Panes as separate cards: an 8pt gap between them, no divider lines, 10pt corners.
+	public static var comfortable: RiftConfiguration {
+		var configuration = RiftConfiguration()
+		configuration.metrics.dividerThickness = 8
+		configuration.dividerColor = .clear
+		configuration.paneCornerRadius = 10
+		configuration.dropIndicatorCornerRadius = 8
+		configuration.glass.cornerRadius = 10
+		return configuration
+	}
+
+	/// Panes that touch, separated by a 1pt line at 70% opacity, with square corners.
+	public static var compact: RiftConfiguration {
+		var configuration = RiftConfiguration()
+		configuration.metrics.dividerThickness = 1
+		configuration.showsDividerLines = true
+		configuration.dividerColor = NSColor.separatorColor.withAlphaComponent(0.7)
+		configuration.paneCornerRadius = 0
+		configuration.dropIndicatorCornerRadius = 0
+		return configuration
+	}
 }
