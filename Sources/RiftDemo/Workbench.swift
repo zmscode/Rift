@@ -110,7 +110,8 @@ struct WorkbenchWindow: View {
 				RiftSidebarAccessory(symbolName: "rectangle.split.3x1", label: "Balance") {
 					actions.balance()
 				},
-			]
+			],
+			toggleShortcut: "⌥⌘S"
 		) {
 			Navigator(
 				layout: layout, focused: $focused, zoomed: zoomed, settings: $settings,

@@ -287,6 +287,7 @@ public struct RiftSidebarSplitView<Sidebar: View, Content: View>: NSViewRepresen
 	private let onPositionChange: ((RiftSidebarPosition) -> Void)?
 	private let onDensityChange: ((RiftChromeDensity) -> Void)?
 	private let accessories: [RiftSidebarAccessory]
+	private let toggleShortcut: String?
 	private let sidebar: Sidebar
 	private let content: Content
 
@@ -313,6 +314,7 @@ public struct RiftSidebarSplitView<Sidebar: View, Content: View>: NSViewRepresen
 		onPositionChange: ((RiftSidebarPosition) -> Void)? = nil,
 		onDensityChange: ((RiftChromeDensity) -> Void)? = nil,
 		accessories: [RiftSidebarAccessory] = [],
+		toggleShortcut: String? = nil,
 		@ViewBuilder sidebar: () -> Sidebar,
 		@ViewBuilder content: () -> Content
 	) {
@@ -328,6 +330,7 @@ public struct RiftSidebarSplitView<Sidebar: View, Content: View>: NSViewRepresen
 		self.onPositionChange = onPositionChange
 		self.onDensityChange = onDensityChange
 		self.accessories = accessories
+		self.toggleShortcut = toggleShortcut
 		self.sidebar = sidebar()
 		self.content = content()
 	}
@@ -380,6 +383,7 @@ public struct RiftSidebarSplitView<Sidebar: View, Content: View>: NSViewRepresen
 
 	private func apply(to view: RiftSidebarContainerView) {
 		view.accessories = accessories
+		if view.toggleShortcut != toggleShortcut { view.toggleShortcut = toggleShortcut }
 		if view.position != position { view.position = position }
 		if view.density != density { view.density = density }
 		view.preservesWindowWidth = preservesWindowWidth
