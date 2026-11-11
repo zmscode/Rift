@@ -12,9 +12,10 @@ public enum RiftTabBarMath {
 	public static let tabGap: CGFloat = 1
 	/// How far the pointer moves before a press on a tab becomes a drag.
 	public static let dragThreshold: CGFloat = 4
-	/// How long a dragged pane hovers over a tab before the tab opens.
+	/// How long a dragged pane hovers over a tab before the tab pulses.
 	public static let springLoadDelay: TimeInterval = 0.32
-	/// How long tabs take to slide to new places.
+	/// The geometry timing's nominal duration (the slide itself is a spring; see
+	/// `RiftTabAnimation`).
 	public static let geometryDuration: TimeInterval = 0.28
 	/// The selected tab's and hover's corner radius (capped at half the tab's height).
 	public static let tabCornerRadius: CGFloat = 16.5
@@ -171,7 +172,7 @@ public struct RiftTabBarLayout: Equatable, Sendable {
 		if showsNewTabButton {
 			let x = trackMaxX - button
 			buttonFrame = CGRect(x: x, y: (midY - button / 2).rounded(), width: button, height: button)
-			trackMaxX = x - spacing
+			trackMaxX = x - RiftTabBarMath.trailingSpacing(density: density)
 		}
 		let height = RiftTabBarMath.tabHeight(density: density)
 		let track = CGRect(
@@ -239,5 +240,77 @@ extension RiftTabBarMath {
 	public static func selectionAfterClosing(index: Int, count: Int) -> Int? {
 		guard count > 1 else { return nil }
 		return index + 1 < count ? index : index - 1
+	}
+}
+
+/// How a tab animation eases.
+public enum RiftTabEasing: String, Sendable, Hashable, CaseIterable {
+	/// The cubic curve (0.2, 0.9, 0.3, 1).
+	case production
+	/// A critically damped spring (mass 1, stiffness 520), lasting its settling time.
+	case spring
+	case linear, easeIn, easeOut, easeInOut
+
+	/// The production curve's control points.
+	public static let productionControlPoints: (Float, Float, Float, Float) = (0.2, 0.9, 0.3, 1)
+	public static let springMass: Double = 1
+	public static let springStiffness: Double = 520
+	/// Critical damping: 2√(stiffness × mass) ≈ 45.6.
+	public static let springDamping: Double = 2 * (springStiffness * springMass).squareRoot()
+}
+
+/// One tab animation's length and easing.
+public struct RiftTabTiming: Sendable, Hashable {
+	public var duration: TimeInterval
+	public var easing: RiftTabEasing
+
+	public init(_ duration: TimeInterval, _ easing: RiftTabEasing = .production) {
+		self.duration = duration
+		self.easing = easing
+	}
+}
+
+/// The tab bar's animation timings.
+public struct RiftTabAnimation: Sendable, Hashable {
+	/// Tabs sliding to new places (and the selection with them): a spring.
+	public var geometry = RiftTabTiming(0.28, .spring)
+	/// A tab appearing.
+	public var insertion = RiftTabTiming(0.22)
+	/// A dropped tab returning to its slot.
+	public var tabReturn = RiftTabTiming(0.42, .easeInOut)
+	/// The other tabs settling after a drop.
+	public var returnLayout = RiftTabTiming(0.4, .spring)
+	/// The hover highlight fading in and out.
+	public var hover = RiftTabTiming(0.14)
+	/// Dividers fading in and out.
+	public var divider = RiftTabTiming(0.2)
+	/// A title starting to fade at its end.
+	public var titleClipping = RiftTabTiming(0.25)
+
+	public init() {}
+
+	public static let standard = RiftTabAnimation()
+}
+
+extension RiftTabBarMath {
+	/// How long a dragged pane hovers over a tab before the tab pulses; it opens the same time
+	/// after that.
+	public static let springLoadPulseDuration: TimeInterval = 0.32
+
+	/// The gap between the tabs and the buttons after them: 8pt, 6 compact.
+	public static func trailingSpacing(density: RiftChromeDensity) -> CGFloat {
+		density == .compact ? 6 : 8
+	}
+
+	/// How much of a title that doesn't fit fades out at its end: the last 20pt (or all of it,
+	/// when narrower), as a gradient location from 0 to 1. `nil` when it fits (within 4pt).
+	public static func titleFadeStart(titleWidth: CGFloat, fieldWidth: CGFloat) -> CGFloat? {
+		guard fieldWidth > 0, titleWidth > fieldWidth - 4 else { return nil }
+		return max(0, (fieldWidth - min(fieldWidth, 20)) / fieldWidth)
+	}
+
+	/// The pane-drop placeholder's corner radius: half its shorter side, at most 16.5.
+	public static func placeholderCornerRadius(_ size: CGSize) -> CGFloat {
+		min(min(size.width, size.height) / 2, tabCornerRadius)
 	}
 }

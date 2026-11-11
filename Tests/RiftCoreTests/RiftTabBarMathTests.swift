@@ -85,8 +85,9 @@ import Testing
 			bounds: CGRect(x: 0, y: 0, width: 600, height: 38), count: 3, density: .comfortable,
 			leadingInset: 80)
 		#expect(layout.newTabButtonFrame == CGRect(x: 564, y: 2, width: 34, height: 34))
-		#expect(layout.trackFrame == CGRect(x: 82, y: 4, width: 476, height: 30))
-		#expect(layout.tabWidth == 158)
+		// 8pt between the track and the button.
+		#expect(layout.trackFrame == CGRect(x: 82, y: 4, width: 474, height: 30))
+		#expect(abs(layout.tabWidth - 472.0 / 3) < 0.0001)
 		#expect(layout.tabFrames.first?.minX == 82)
 		// A held width survives a close.
 		let held = RiftTabBarLayout.resolve(
@@ -111,5 +112,32 @@ import Testing
 			hasIcon: true)
 		#expect(withIcon.iconFrame == CGRect(x: 10, y: 7, width: 16, height: 16))
 		#expect(withIcon.titleFrame.minX == 29)
+	}
+}
+
+@Suite struct TabAnimationTests {
+	@Test func defaultTimings() {
+		let a = RiftTabAnimation.standard
+		#expect(a.geometry == RiftTabTiming(0.28, .spring))
+		#expect(a.insertion == RiftTabTiming(0.22))
+		#expect(a.tabReturn == RiftTabTiming(0.42, .easeInOut))
+		#expect(a.returnLayout == RiftTabTiming(0.4, .spring))
+		#expect(a.hover == RiftTabTiming(0.14))
+		#expect(a.divider == RiftTabTiming(0.2))
+		#expect(a.titleClipping == RiftTabTiming(0.25))
+		#expect(abs(RiftTabEasing.springDamping - 45.607) < 0.001)
+	}
+
+	@Test func titleFadesOverItsLast20Points() {
+		#expect(RiftTabBarMath.titleFadeStart(titleWidth: 96, fieldWidth: 100) == nil)
+		#expect(RiftTabBarMath.titleFadeStart(titleWidth: 97, fieldWidth: 100) == 0.8)
+		#expect(RiftTabBarMath.titleFadeStart(titleWidth: 50, fieldWidth: 10) == 0)
+	}
+
+	@Test func placeholderAndSpacing() {
+		#expect(RiftTabBarMath.placeholderCornerRadius(CGSize(width: 100, height: 30)) == 15)
+		#expect(RiftTabBarMath.placeholderCornerRadius(CGSize(width: 100, height: 40)) == 16.5)
+		#expect(RiftTabBarMath.trailingSpacing(density: .comfortable) == 8)
+		#expect(RiftTabBarMath.trailingSpacing(density: .compact) == 6)
 	}
 }

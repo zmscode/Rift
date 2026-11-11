@@ -201,6 +201,8 @@ public final class RiftTabBarView<ID: Hashable>: NSView, RiftPaneDropAccepting {
 	}
 	/// Takes the surfaces' tints and the text colours from a theme.
 	public var theme: RiftThemeSelection? { didSet { if theme != oldValue { restyle() } } }
+	/// How tabs move, fade and settle.
+	public var animation: RiftTabAnimation = .standard
 	/// Views that can trade panes with this bar (see `RiftConfiguration.dragGroup`).
 	public var paneDropGroup: String?
 
@@ -244,6 +246,8 @@ public final class RiftTabBarView<ID: Hashable>: NSView, RiftPaneDropAccepting {
 
 	// Tab drag
 	private var draggedTab: ID?
+	/// The tab returning to its slot after a drop (for one layout).
+	private var returningTab: ID?
 	private var dragOrder: [ID]?
 	private var dragOriginalOrder: [ID] = []
 	private var dragStartPointer: CGPoint = .zero
@@ -253,6 +257,7 @@ public final class RiftTabBarView<ID: Hashable>: NSView, RiftPaneDropAccepting {
 	private var paneDropIndex: Int?
 	private var springLoadedTab: ID?
 	private var springLoadTimer: Timer?
+	private var springLoadRevision = 0
 
 	public override init(frame: NSRect) {
 		super.init(frame: frame)
@@ -363,8 +368,19 @@ public final class RiftTabBarView<ID: Hashable>: NSView, RiftPaneDropAccepting {
 				continue
 			}
 			let isNew = view.frame.isEmpty
-			if isNew { view.frame = slots[index] }
-			place(view, slots[index], animated: animated && !isNew)
+			if isNew {
+				view.frame = slots[index]
+				// A new tab fades in on the insertion timing.
+				if animated {
+					view.alphaValue = 0
+					RiftTabAnimator.setAlpha(view, 1, timing: animation.insertion)
+				}
+			}
+			// After a drop the dropped tab returns on its own timing and the others settle.
+			let timing: RiftTabTiming? =
+				returningTab == nil
+				? nil : (id == returningTab ? animation.tabReturn : animation.returnLayout)
+			place(view, slots[index], animated: animated && !isNew, timing: timing)
 		}
 		if let selectedTab, let view = itemViews[selectedTab],
 			let index = order.firstIndex(of: selectedTab), slots.indices.contains(index)
@@ -407,42 +423,22 @@ public final class RiftTabBarView<ID: Hashable>: NSView, RiftPaneDropAccepting {
 		// Clipped to the strip the tabs scroll in.
 		let strip = resolved.trackFrame.insetBy(dx: -2, dy: -2)
 		hull = hull.intersection(strip.insetBy(dx: -RiftTabBarMath.trackOvershoot, dy: -4))
-		let duration = RiftTabBarMath.geometryDuration / 1.5
-		if animated, trackSurface.frame != hull, !trackSurface.frame.isEmpty {
-			NSAnimationContext.runAnimationGroup { context in
-				context.duration = duration
-				context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1)
-				context.allowsImplicitAnimation = true
-				trackSurface.animator().frame = hull
-			}
-		} else if draggedTab == nil || !animated {
+		// The track moves on the geometry timing (at two thirds of its duration).
+		var timing = animation.geometry
+		timing.duration /= 1.5
+		if animated, !trackSurface.frame.isEmpty {
+			RiftTabAnimator.setFrame(trackSurface, hull, timing: timing)
+		} else {
 			trackSurface.frame = hull
 		}
 		let alpha: CGFloat = tabs.count == 1 && !fillsAvailableSpace ? 0 : 1
-		if trackSurface.alphaValue != alpha {
-			if animated {
-				NSAnimationContext.runAnimationGroup { context in
-					context.duration = duration
-					trackSurface.animator().alphaValue = alpha
-				}
-			} else {
-				trackSurface.alphaValue = alpha
-			}
-		}
+		RiftTabAnimator.setAlpha(trackSurface, alpha, timing: animated ? timing : nil)
 	}
 
-	private func place(_ view: NSView, _ frame: CGRect, animated: Bool) {
-		guard view.frame != frame else { return }
-		if animated {
-			NSAnimationContext.runAnimationGroup { context in
-				context.duration = RiftTabBarMath.geometryDuration
-				context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1)
-				context.allowsImplicitAnimation = true
-				view.animator().frame = frame
-			}
-		} else {
-			view.frame = frame
-		}
+	private func place(
+		_ view: NSView, _ frame: CGRect, animated: Bool, timing: RiftTabTiming? = nil
+	) {
+		RiftTabAnimator.setFrame(view, frame, timing: animated ? (timing ?? animation.geometry) : nil)
 	}
 
 	private func layoutAnimated() {
@@ -496,12 +492,12 @@ public final class RiftTabBarView<ID: Hashable>: NSView, RiftPaneDropAccepting {
 		let looks = base.looks(isDark: isDark)
 		trackSurface.style = isWindowActive ? looks.track : looks.inactiveWindowTrack
 		selectionSurface.style = isWindowActive ? looks.selection : looks.inactiveWindowSelection
+		// White at 11.2% (dark) or black at 8% (light), with a 1pt separator-coloured outline.
 		var placeholderStyle = RiftSurfaceStyle()
 		placeholderStyle.cornerRadius = RiftTabBarMath.tabCornerRadius
-		placeholderStyle.fill = RiftSurfaceFill(color: .controlAccentColor.withAlphaComponent(0.16))
-		placeholderStyle.strokes = [
-			RiftSurfaceStroke(color: .controlAccentColor.withAlphaComponent(0.5))
-		]
+		placeholderStyle.fill = RiftSurfaceFill(
+			color: isDark ? NSColor(white: 1, alpha: 0.112) : NSColor(white: 0, alpha: 0.08))
+		placeholderStyle.strokes = [RiftSurfaceStroke(color: .separatorColor)]
 		placeholder.style = placeholderStyle
 		newTabButton.foregroundColor = textColor
 		for view in itemViews.values {
@@ -683,6 +679,7 @@ public final class RiftTabBarView<ID: Hashable>: NSView, RiftPaneDropAccepting {
 	func beginTabDrag(_ id: ID, pointer: CGPoint) {
 		guard let view = itemViews[id] else { return }
 		hoveredTab = nil
+		view.layer?.removeAllAnimations()
 		draggedTab = id
 		dragOriginalOrder = tabs.map(\.id)
 		dragOrder = dragOriginalOrder
@@ -748,7 +745,9 @@ public final class RiftTabBarView<ID: Hashable>: NSView, RiftPaneDropAccepting {
 			onMove?(dragged, index)
 		}
 		// The tab returns to its slot.
+		returningTab = dragged
 		layoutAnimated()
+		returningTab = nil
 	}
 
 	// MARK: Pane drops
@@ -775,6 +774,7 @@ public final class RiftTabBarView<ID: Hashable>: NSView, RiftPaneDropAccepting {
 		// Spring-loading: hovering a tab opens it.
 		let hovered = itemViews.first { $0.value.frame.contains(inClip) }?.key
 		if hovered != springLoadedTab {
+			springLoadRevision += 1
 			springLoadTimer?.invalidate()
 			springLoadedTab = hovered
 			if let hovered, hovered != selectedTab {
@@ -788,10 +788,23 @@ public final class RiftTabBarView<ID: Hashable>: NSView, RiftPaneDropAccepting {
 		return true
 	}
 
+	/// After hovering 0.32s the tab pulses (unless Reduce Motion is on); 0.32s later it opens.
 	private func springLoad() {
 		guard let id = springLoadedTab else { return }
-		itemViews[id]?.pulse()
-		onSelect?(id)
+		let duration = RiftTabBarMath.springLoadPulseDuration
+		if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+			itemViews[id]?.pulse(duration: duration)
+		}
+		springLoadRevision += 1
+		let revision = springLoadRevision
+		springLoadTimer = Timer.scheduledTimer(withTimeInterval: duration, repeats: false) {
+			[weak self] _ in
+			MainActor.assumeIsolated {
+				guard let self, self.springLoadRevision == revision, let id = self.springLoadedTab
+				else { return }
+				self.onSelect?(id)
+			}
+		}
 	}
 
 	func paneDragExited() {
@@ -872,18 +885,22 @@ final class RiftTabItemView<ID: Hashable>: NSView, NSTextFieldDelegate {
 	var showsDivider = true {
 		didSet {
 			guard showsDivider != oldValue else { return }
-			CATransaction.begin()
-			CATransaction.setAnimationDuration(0.14)
-			divider.opacity = showsDivider ? 1 : 0
-			CATransaction.commit()
+			RiftTabAnimator.setOpacity(
+				divider, showsDivider ? 1 : 0, timing: window == nil ? nil : animation.divider)
 		}
 	}
+	private var animation: RiftTabAnimation { bar?.animation ?? .standard }
 
 	private let hoverSurface = RiftSurfaceStackView()
 	private let divider = CALayer()
 	private let label = NSTextField(labelWithString: "")
 	private let icon = NSImageView()
 	private let fadeMask = CAGradientLayer()
+	private let pulseLayer = CAShapeLayer()
+	private var hoverRadius: CGFloat = 0
+	/// Whether the title fade has been laid out once (it only animates in after that).
+	private var didInitialTitleLayout = false
+	private var titleIsFaded = false
 	private let closeButton = RiftChromeIconButton()
 	private var editor: NSTextField?
 	private var density: RiftChromeDensity = .comfortable
@@ -909,7 +926,6 @@ final class RiftTabItemView<ID: Hashable>: NSView, NSTextFieldDelegate {
 		fadeMask.startPoint = CGPoint(x: 0, y: 0.5)
 		fadeMask.endPoint = CGPoint(x: 1, y: 0.5)
 		fadeMask.colors = [NSColor.black.cgColor, NSColor.black.cgColor, NSColor.clear.cgColor]
-		label.layer?.mask = fadeMask
 		addSubview(label)
 		icon.isHidden = true
 		icon.imageScaling = .scaleProportionallyDown
@@ -931,7 +947,11 @@ final class RiftTabItemView<ID: Hashable>: NSView, NSTextFieldDelegate {
 
 	override var isFlipped: Bool { true }
 	override var mouseDownCanMoveWindow: Bool { false }
-	override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+	override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+		if let event, !(window?.isKeyWindow ?? false) { firstMouseTimestamp = event.timestamp }
+		return true
+	}
+	private var firstMouseTimestamp: TimeInterval?
 
 	func applyLooks(
 		hover: RiftSurfaceStyle, density: RiftChromeDensity, textColor: NSColor, windowActive: Bool
@@ -966,11 +986,36 @@ final class RiftTabItemView<ID: Hashable>: NSView, NSTextFieldDelegate {
 		label.frame = item.titleFrame
 		editor?.frame = item.titleFrame.insetBy(dx: -3, dy: -2)
 		fadeMask.frame = label.bounds
-		// Fade the last 16pt of a title that doesn't fit.
-		let fits = label.attributedStringValue.size().width <= label.bounds.width
-		let start = label.bounds.width > 0 ? max(0, 1 - 16 / label.bounds.width) : 1
-		fadeMask.locations = fits ? [0, 1, 1] : [0, NSNumber(value: start), 1]
+		hoverRadius = item.cornerRadius
 		CATransaction.commit()
+		updateTitleFade()
+	}
+
+	/// A title that doesn't fit (within 4pt) fades over its last 20pt. The fade animates in on the
+	/// title-clipping timing when it starts after the first layout.
+	private func updateTitleFade() {
+		guard label.bounds.width > 0 else { return }
+		let start = RiftTabBarMath.titleFadeStart(
+			titleWidth: label.attributedStringValue.size().width, fieldWidth: label.bounds.width)
+		guard let start else {
+			label.layer?.mask = nil
+			titleIsFaded = false
+			didInitialTitleLayout = true
+			return
+		}
+		CATransaction.begin()
+		CATransaction.setDisableActions(true)
+		fadeMask.frame = label.bounds
+		fadeMask.locations = [0, NSNumber(value: Double(start)), 1]
+		label.layer?.mask = fadeMask
+		CATransaction.commit()
+		if didInitialTitleLayout, !titleIsFaded {
+			RiftTabAnimator.add(
+				to: fadeMask, keyPath: "locations", from: [0, 1, 1] as [NSNumber],
+				to: [0, NSNumber(value: Double(start)), 1], timing: animation.titleClipping)
+		}
+		titleIsFaded = true
+		didInitialTitleLayout = true
 	}
 
 	/// Only while hovered (or kept showing by the bar).
@@ -979,30 +1024,42 @@ final class RiftTabItemView<ID: Hashable>: NSView, NSTextFieldDelegate {
 	private func updateVisibility(animated: Bool = false) {
 		closeButton.isHidden = !showsCloseButton
 		let alpha: CGFloat = isHovered && !isSelected ? 1 : 0
-		if animated {
-			NSAnimationContext.runAnimationGroup { context in
-				context.duration = 0.14
-				hoverSurface.animator().alphaValue = alpha
-			}
-		} else {
-			hoverSurface.alphaValue = alpha
-		}
+		RiftTabAnimator.setAlpha(hoverSurface, alpha, timing: animated ? animation.hover : nil)
 		needsLayout = true
 	}
 
-	/// The spring-loading flash: the tab swells a little and settles.
-	func pulse() {
-		guard let layer else { return }
-		let pulse = CASpringAnimation(keyPath: "transform.scale")
-		pulse.fromValue = 1.06
-		pulse.toValue = 1
-		pulse.damping = 12
-		pulse.stiffness = 300
-		pulse.mass = 1
-		pulse.duration = pulse.settlingDuration
-		layer.anchorPoint = CGPoint(x: 0.5, y: 0.5)
-		layer.position = CGPoint(x: frame.midX, y: frame.midY)
-		layer.add(pulse, forKey: "rift.springLoad")
+	/// The spring-loading flash on an unselected tab: its highlight flashes twice (clear, tint,
+	/// clear, tint, clear at 0, ¼, ½, ¾ and 1, each step ease-in-out) over `duration`. The tint is
+	/// white at 7% (dark) or black at 5% (light).
+	func pulse(duration: TimeInterval) {
+		guard !isSelected, let host = hoverSurface.layer else { return }
+		if pulseLayer.superlayer !== host { host.addSublayer(pulseLayer) }
+		CATransaction.begin()
+		CATransaction.setDisableActions(true)
+		pulseLayer.frame = hoverSurface.bounds
+		pulseLayer.path = CGPath(
+			roundedRect: pulseLayer.bounds, cornerWidth: hoverRadius, cornerHeight: hoverRadius,
+			transform: nil)
+		pulseLayer.fillColor = NSColor.clear.cgColor
+		CATransaction.commit()
+		let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+		let tint = (dark ? NSColor.white.withAlphaComponent(0.07) : NSColor.black.withAlphaComponent(0.05))
+			.cgColor
+		let clear = NSColor.clear.cgColor
+		let flash = CAKeyframeAnimation(keyPath: "fillColor")
+		flash.values = [clear, tint, clear, tint, clear]
+		flash.keyTimes = [0, 0.25, 0.5, 0.75, 1]
+		flash.timingFunctions = Array(repeating: CAMediaTimingFunction(name: .easeInEaseOut), count: 4)
+		flash.duration = duration
+		pulseLayer.add(flash, forKey: "rift.springLoad")
+		// The hover surface is normally hidden on this tab; show it for the flash.
+		hoverSurface.alphaValue = 1
+		hoverSurface.layer?.sublayers?.forEach { if $0 !== pulseLayer { $0.opacity = 0 } }
+		DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
+			guard let self else { return }
+			self.hoverSurface.layer?.sublayers?.forEach { $0.opacity = 1 }
+			self.updateVisibility()
+		}
 	}
 
 	@objc private func closeClicked() { bar?.itemClose(id) }
@@ -1015,10 +1072,12 @@ final class RiftTabItemView<ID: Hashable>: NSView, NSTextFieldDelegate {
 		guard editor == nil else { return super.mouseDown(with: event) }
 		pressPoint = event.locationInWindow
 		isDragging = false
-		// A click on the already-selected tab in the key window renames it.
+		// A click on the already-selected tab in the key, active window renames it, unless it
+		// comes within a double-click interval of the click that activated the window.
+		let sinceFirstMouse = firstMouseTimestamp.map { event.timestamp - $0 } ?? .infinity
 		armsRename =
 			isSelected && event.clickCount == 1 && (window?.isKeyWindow ?? false)
-			&& NSApp.isActive
+			&& NSApp.isActive && sinceFirstMouse > NSEvent.doubleClickInterval
 		if !isSelected { bar?.itemClicked(id) }
 	}
 
