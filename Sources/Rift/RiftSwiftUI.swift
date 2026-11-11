@@ -284,6 +284,8 @@ public struct RiftSidebarSplitView<Sidebar: View, Content: View>: NSViewRepresen
 	private let animationStyle: RiftAnimationStyle
 	private let hidesToggleButton: Bool
 	private let onCollapseProgressChange: ((CGFloat) -> Void)?
+	private let onPositionChange: ((RiftSidebarPosition) -> Void)?
+	private let onDensityChange: ((RiftChromeDensity) -> Void)?
 	private let sidebar: Sidebar
 	private let content: Content
 
@@ -293,6 +295,8 @@ public struct RiftSidebarSplitView<Sidebar: View, Content: View>: NSViewRepresen
 	///   - preservesWindowWidth: keep the window's width when folding (the content takes the
 	///     space) instead of shrinking and growing the window.
 	///   - animationStyle: the fold uses this style's chrome curve.
+	///   - onPositionChange, onDensityChange: the user picked a side or density from the toggle
+	///     button's right-click menu. Give either to show the menu.
 	public init(
 		isCollapsed: Binding<Bool>,
 		width: Binding<CGFloat> = .constant(RiftSidebarMath.defaultWidth),
@@ -303,6 +307,8 @@ public struct RiftSidebarSplitView<Sidebar: View, Content: View>: NSViewRepresen
 		animationStyle: RiftAnimationStyle = .snappy,
 		hidesToggleButton: Bool = false,
 		onCollapseProgressChange: ((CGFloat) -> Void)? = nil,
+		onPositionChange: ((RiftSidebarPosition) -> Void)? = nil,
+		onDensityChange: ((RiftChromeDensity) -> Void)? = nil,
 		@ViewBuilder sidebar: () -> Sidebar,
 		@ViewBuilder content: () -> Content
 	) {
@@ -315,6 +321,8 @@ public struct RiftSidebarSplitView<Sidebar: View, Content: View>: NSViewRepresen
 		self.animationStyle = animationStyle
 		self.hidesToggleButton = hidesToggleButton
 		self.onCollapseProgressChange = onCollapseProgressChange
+		self.onPositionChange = onPositionChange
+		self.onDensityChange = onDensityChange
 		self.sidebar = sidebar()
 		self.content = content()
 	}
@@ -363,6 +371,8 @@ public struct RiftSidebarSplitView<Sidebar: View, Content: View>: NSViewRepresen
 		view.preservesWindowWidth = preservesWindowWidth
 		view.swipe = swipe
 		view.foldCurve = animationStyle.chromeCurve
+		view.onPositionChange = onPositionChange
+		view.onDensityChange = onDensityChange
 		if view.hidesToggleButton != hidesToggleButton {
 			view.hidesToggleButton = hidesToggleButton
 		}

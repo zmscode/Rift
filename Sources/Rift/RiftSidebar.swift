@@ -51,6 +51,20 @@ open class RiftSidebarContainerView: NSView {
 	public var foldCurve: RiftMotionCurve? = RiftAnimationStyle.snappy.chromeCurve
 	public var swipe: RiftSidebarSwipe = .swipe
 	public var hidesToggleButton = false { didSet { relayout() } }
+	/// Keep the window from being resized narrower than `windowMinimumWidth` (and widen it if it
+	/// already is).
+	public var managesWindowMinimumWidth = true { didSet { applyWindowMinimumWidth() } }
+	/// The colour of the line between the sidebar and the content in compact density.
+	public var dividerColor: NSColor = NSColor(name: nil) { appearance in
+		appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+			? NSColor(white: 1, alpha: 0.1) : NSColor(white: 0, alpha: 0.1)
+	} { didSet { relayout() } }
+
+	/// The user picked a side or a density from the toggle button's menu (right-click it).
+	public var onPositionChange: ((RiftSidebarPosition) -> Void)?
+	public var onDensityChange: ((RiftChromeDensity) -> Void)?
+	/// `windowMinimumWidth` changed.
+	public var onWindowMinimumWidthChange: ((CGFloat) -> Void)?
 
 	/// The user folded or unfolded the sidebar (toggle, swipe).
 	public var onCollapsedChange: ((Bool) -> Void)?
@@ -67,7 +81,13 @@ open class RiftSidebarContainerView: NSView {
 		}
 	}
 	/// The smallest the window should be: 720pt open, less once a fold has shrunk it.
-	public private(set) var windowMinimumWidth: CGFloat = RiftSidebarMath.expandedWindowMinimumWidth
+	public private(set) var windowMinimumWidth: CGFloat = RiftSidebarMath.expandedWindowMinimumWidth {
+		didSet {
+			guard windowMinimumWidth != oldValue else { return }
+			onWindowMinimumWidthChange?(windowMinimumWidth)
+		}
+	}
+	private let dividerLine = CALayer()
 
 	public let toggleButton = RiftChromeIconButton()
 	private let resizeHandle = RiftSidebarResizeHandle()
@@ -102,6 +122,10 @@ open class RiftSidebarContainerView: NSView {
 			self.onWidthChange?(self.width)
 		}
 		addSubview(resizeHandle)
+		toggleButton.menuProvider = { [weak self] in
+			guard let self, self.onPositionChange != nil || self.onDensityChange != nil else { return nil }
+			return self.makeToggleMenu()
+		}
 		toggleButton.target = self
 		toggleButton.action = #selector(toggleSidebar)
 		addSubview(toggleButton)
@@ -133,7 +157,17 @@ open class RiftSidebarContainerView: NSView {
 		let visible = width
 		// How much the window changes: shrink when folding (if it may), grow back by the same.
 		var windowChange: CGFloat = 0
-		if !preservesWindowWidth, !isFullScreen, let window {
+		// A window that (nearly) fills its screen keeps its width, like `preservesWindowWidth`.
+		let fillsScreen =
+			window.flatMap { window in
+				window.screen.map {
+					RiftSidebarMath.windowFillsScreen(
+						windowFrame: window.frame, screenFrame: $0.visibleFrame)
+				}
+			} ?? false
+		if collapsed, preservesWindowWidth || isFullScreen || fillsScreen {
+			collapsedWindowShrink = 0
+		} else if !preservesWindowWidth, !isFullScreen, let window {
 			if collapsed {
 				collapsedWindowShrink = RiftSidebarMath.collapsedWindowShrink(
 					windowWidth: window.frame.width, sidebarWidth: visible)
@@ -161,18 +195,30 @@ open class RiftSidebarContainerView: NSView {
 			}
 			return target
 		}
+		// No animation with Reduce Motion, or while nobody can see the window.
+		let isWatched =
+			window.map { $0.isVisible && $0.occlusionState.contains(.visible) } ?? false
 		let curve =
-			NSWorkspace.shared.accessibilityDisplayShouldReduceMotion || !animated ? nil : foldCurve
+			NSWorkspace.shared.accessibilityDisplayShouldReduceMotion || !animated || !isWatched
+			? nil : foldCurve
 		motion.cancel(Self.foldTrack, finishing: false)
+		// While it unfolds the sidebar is fully opaque; it fades away once folded.
+		if !collapsed {
+			sidebarView.animator().alphaValue = 1
+			sidebarView.alphaValue = 1
+		}
+		// The window may be as narrow as the fold leaves it before it gets there.
+		if collapsed { applyWindowMinimumWidth() }
 		announceFold(contentChange: contentChange)
 		guard let curve, window != nil else {
 			if let targetFrame, windowChange != 0 { window?.setFrame(targetFrame, display: true) }
 			collapseProgress = end
 			relayout()
-			finishFold()
+			finishFold(animated: false)
 			return
 		}
-		let timing = RiftMotionTiming(duration: curve.transitionDuration, curve: curve)
+		let timing = RiftMotionTiming(
+			duration: RiftSidebarMath.foldDuration(curve: curve), curve: curve)
 		motion.run(
 			Self.foldTrack, duration: timing.duration,
 			apply: { [weak self] elapsed in
@@ -185,7 +231,30 @@ open class RiftSidebarContainerView: NSView {
 				self.collapseProgress = start + (end - start) * CGFloat(p)
 				self.relayout()
 			},
-			completion: { [weak self] in self?.finishFold() })
+			completion: { [weak self] in self?.finishFold(animated: true) })
+	}
+
+	/// Keeps the window at least `windowMinimumWidth` wide, widening it (within its screen) if it
+	/// is narrower.
+	private func applyWindowMinimumWidth() {
+		guard managesWindowMinimumWidth, let window, !isFullScreen else { return }
+		let minimum = windowMinimumWidth
+		if window.contentMinSize.width != minimum {
+			window.contentMinSize = CGSize(width: minimum, height: window.contentMinSize.height)
+		}
+		if window.minSize.width != minimum {
+			window.minSize = CGSize(width: minimum, height: window.minSize.height)
+		}
+		guard window.frame.width < minimum, !motion.isRunning(Self.foldTrack) else { return }
+		var frame = window.frame
+		let growth = minimum - frame.width
+		frame.size.width = minimum
+		if position == .left { frame.origin.x -= growth }
+		if let screen = window.screen?.visibleFrame {
+			frame.size.width = min(frame.width, screen.width)
+			frame.origin.x = min(max(frame.minX, screen.minX), screen.maxX - frame.width)
+		}
+		window.setFrame(frame, display: true)
 	}
 
 	/// Tells layouts in the content that its width is about to change (they hold their content
@@ -206,13 +275,55 @@ open class RiftSidebarContainerView: NSView {
 			])
 	}
 
-	private func finishFold() {
+	private func finishFold(animated: Bool) {
+		applyWindowMinimumWidth()
+		relayout()
+		if isCollapsed, collapseProgress >= 1 {
+			// The folded sidebar fades out, then is hidden.
+			NSAnimationContext.runAnimationGroup { context in
+				context.duration = animated ? RiftSidebarMath.fadeOutDuration : 0
+				context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+				sidebarView.animator().alphaValue = 0
+			} completionHandler: { [weak self] in
+				MainActor.assumeIsolated {
+					guard let self, self.isCollapsed, self.collapseProgress >= 1 else { return }
+					self.sidebarView.isHidden = true
+				}
+			}
+		}
 		guard announcedFold else { return }
 		announcedFold = false
 		if let window {
 			NotificationCenter.default.post(
 				name: RiftContainerAnimation.didEndNotification, object: window)
 		}
+	}
+
+	// MARK: Toggle menu
+
+	/// The toggle button's right-click menu: which side the sidebar is on, and the density.
+	private func makeToggleMenu() -> NSMenu {
+		let menu = NSMenu()
+		func add(_ title: String, symbol: String, on: Bool, _ action: @escaping () -> Void) {
+			let item = RiftClosureMenuItem(title: title, handler: action)
+			item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+			item.state = on ? .on : .off
+			menu.addItem(item)
+		}
+		add("Left Side", symbol: "sidebar.leading", on: position == .left) { [weak self] in
+			self?.onPositionChange?(.left)
+		}
+		add("Right Side", symbol: "sidebar.trailing", on: position == .right) { [weak self] in
+			self?.onPositionChange?(.right)
+		}
+		menu.addItem(.separator())
+		add("Comfortable", symbol: "rectangle.grid.2x2", on: density == .comfortable) { [weak self] in
+			self?.onDensityChange?(.comfortable)
+		}
+		add("Compact", symbol: "rectangle.split.2x2", on: density == .compact) { [weak self] in
+			self?.onDensityChange?(.compact)
+		}
+		return menu
 	}
 
 	// MARK: Layout
@@ -241,7 +352,16 @@ open class RiftSidebarContainerView: NSView {
 			position == .left
 			? CGRect(x: 0, y: 0, width: visible, height: bounds.height)
 			: CGRect(x: w - visible, y: 0, width: visible, height: bounds.height)
-		sidebarView.isHidden = visible <= 0
+		if visible > 0 { sidebarView.isHidden = false }
+		// In compact density a hairline separates the sidebar from the panes.
+		if dividerLine.superlayer == nil { layer?.addSublayer(dividerLine) }
+		dividerLine.zPosition = 10
+		dividerLine.isHidden = density != .compact || visible <= 0
+		let lineX = position == .left ? visible - 0.5 : bounds.width - visible - 0.5
+		dividerLine.frame = CGRect(x: lineX, y: 0, width: 1, height: bounds.height)
+		effectiveAppearance.performAsCurrentDrawingAppearance {
+			dividerLine.backgroundColor = dividerColor.cgColor
+		}
 		// Compact panes overlap the sidebar's edge by a point, so the shared line is drawn once.
 		let overlap: CGFloat = density == .compact && visible > 0 ? 1 : 0
 		let contentWidth = max(0, bounds.width - visible + overlap)
@@ -257,7 +377,7 @@ open class RiftSidebarContainerView: NSView {
 		toggleButton.frame = RiftSidebarMath.toggleFrame(
 			position: position, containerWidth: bounds.width, isFullScreen: isFullScreen,
 			density: density)
-		toggleButton.symbolName = position == .left ? "sidebar.leading" : "sidebar.trailing"
+		toggleButton.symbolName = position == .left ? "sidebar.left" : "sidebar.right"
 		let label = isCollapsed ? "Show Sidebar" : "Hide Sidebar"
 		if toggleButton.toolTip != label {
 			toggleButton.toolTip = label
@@ -313,6 +433,7 @@ open class RiftSidebarContainerView: NSView {
 		}
 		guard let window else { return }
 		isFullScreen = window.styleMask.contains(.fullScreen)
+		applyWindowMinimumWidth()
 		fullScreenObservers = [
 			NSWindow.didEnterFullScreenNotification, NSWindow.didExitFullScreenNotification,
 		]
@@ -368,8 +489,9 @@ open class RiftSidebarContainerView: NSView {
 	private func scrollsSideways(at point: CGPoint) -> Bool {
 		var view = hitTest(convert(point, to: superview))
 		while let current = view, current !== self {
-			if let scroll = current as? NSScrollView, scroll.hasHorizontalScroller,
-				let document = scroll.documentView, document.frame.width > scroll.contentSize.width
+			if let scroll = current as? NSScrollView, !scroll.isHiddenOrHasHiddenAncestor,
+				let document = scroll.documentView,
+				document.frame.width > scroll.contentView.bounds.width + 0.5
 			{
 				return true
 			}
@@ -418,6 +540,10 @@ public final class RiftChromeIconButton: NSButton {
 	public var restingForegroundOpacity: CGFloat = 0.7 { didSet { updateAppearance() } }
 	public var foregroundColor: NSColor = .labelColor { didSet { updateAppearance() } }
 	public var hoverBackgroundColor: NSColor = .quaternaryLabelColor { didSet { updateAppearance() } }
+	/// Builds the menu shown on right-click (or Control-click); `nil` shows none.
+	public var menuProvider: (() -> NSMenu?)?
+
+	public override func menu(for event: NSEvent) -> NSMenu? { menuProvider?() }
 
 	private let hoverLayer = CALayer()
 	private var trackingArea: NSTrackingArea?
@@ -482,4 +608,20 @@ public final class RiftChromeIconButton: NSButton {
 		}
 		hoverLayer.backgroundColor = isHovered ? background : nil
 	}
+}
+
+/// A menu item that runs a closure.
+final class RiftClosureMenuItem: NSMenuItem {
+	private let handler: () -> Void
+
+	init(title: String, handler: @escaping () -> Void) {
+		self.handler = handler
+		super.init(title: title, action: #selector(run), keyEquivalent: "")
+		target = self
+	}
+
+	@available(*, unavailable)
+	required init(coder: NSCoder) { fatalError() }
+
+	@objc private func run() { handler() }
 }

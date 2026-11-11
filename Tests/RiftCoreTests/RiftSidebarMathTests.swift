@@ -72,3 +72,23 @@ import Testing
 		#expect(RiftSidebarMath.collapsedWindowMinimumWidth(shrink: 100) == 620)
 	}
 }
+
+@Suite struct SidebarFoldTests {
+	@Test func aWindowThatFillsItsScreenKeepsItsWidth() {
+		let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
+		#expect(
+			RiftSidebarMath.windowFillsScreen(
+				windowFrame: CGRect(x: 0, y: 0, width: 1400, height: 800), screenFrame: screen))
+		#expect(
+			!RiftSidebarMath.windowFillsScreen(
+				windowFrame: CGRect(x: 0, y: 0, width: 1200, height: 800), screenFrame: screen))
+		#expect(
+			!RiftSidebarMath.windowFillsScreen(
+				windowFrame: CGRect(x: 3000, y: 0, width: 1440, height: 800), screenFrame: screen))
+	}
+
+	@Test func foldsTakeTheSpringsSettlingTimeOrThreeTenths() {
+		#expect(RiftSidebarMath.foldDuration(curve: .linear) == 0.3)
+		#expect(RiftSidebarMath.foldDuration(curve: .snappy) == RiftMotionCurve.snappy.settlingDuration)
+	}
+}

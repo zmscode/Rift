@@ -97,7 +97,9 @@ struct WorkbenchWindow: View {
 			position: settings.sidebarPosition, density: settings.density,
 			preservesWindowWidth: settings.keepsWindowWidth, swipe: settings.swipe,
 			animationStyle: settings.motion,
-			onCollapseProgressChange: { foldProgress = $0 }
+			onCollapseProgressChange: { foldProgress = $0 },
+			onPositionChange: { settings.sidebarPosition = $0 },
+			onDensityChange: { settings.look = $0 == .compact ? .compact : .comfortable }
 		) {
 			Navigator(
 				layout: layout, focused: $focused, zoomed: zoomed, settings: $settings,
@@ -123,7 +125,7 @@ struct WorkbenchWindow: View {
 			}
 		}
 		.ignoresSafeArea()
-		.frame(minWidth: 640, minHeight: 420)
+		.frame(minHeight: 420)
 		.focusedSceneValue(\.workbench, actions)
 		.onChange(of: layout == nil) { _, isEmpty in
 			if isEmpty { NSApp.keyWindow?.close() }

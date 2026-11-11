@@ -108,6 +108,21 @@ public enum RiftSidebarMath {
 		return min(width, max(0, windowWidth - floor))
 	}
 
+	/// Whether folding leaves the window's width alone because the window (nearly) fills its
+	/// screen: it is on screen and at most 64pt narrower than the screen's visible area.
+	public static func windowFillsScreen(windowFrame: CGRect, screenFrame: CGRect) -> Bool {
+		guard !screenFrame.isEmpty, windowFrame.intersects(screenFrame) else { return false }
+		return windowFrame.width >= screenFrame.width - 64
+	}
+
+	/// How long a fold on `curve` takes: a spring's settling time, else 0.3 seconds.
+	public static func foldDuration(curve: RiftMotionCurve) -> Double {
+		curve.settlingDuration ?? 0.3
+	}
+
+	/// The sidebar fades out over this long (ease-out) once it has folded away.
+	public static let fadeOutDuration: Double = 0.16
+
 	/// The smallest a window may be with the sidebar folded after shrinking by `shrink`.
 	public static func collapsedWindowMinimumWidth(shrink: CGFloat) -> CGFloat {
 		max(expandedWindowMinimumWidth - shrink, 480)
