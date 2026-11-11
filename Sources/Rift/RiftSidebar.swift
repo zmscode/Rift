@@ -33,6 +33,20 @@ public protocol RiftSidebarChromeObserving: AnyObject {
 /// - Layouts inside (`RiftSidebarChromeObserving`) keep room for the window buttons as it folds.
 open class RiftSidebarContainerView: NSView {
 	public let sidebarView: NSView
+	/// Holds the sidebar view, its title row and its buttons; this is what folds and fades.
+	private let sidebarPanel = RiftSidebarPanelView()
+	private let titleRow = RiftSidebarTitleRowView()
+	/// The sidebar's own buttons, in its title row beside the toggle (see `RiftSidebarAccessory`).
+	public var accessories: [RiftSidebarAccessory] = [] {
+		didSet {
+			let old = oldValue.map { "\($0.symbolName)|\($0.label)" }
+			if old != accessories.map({ "\($0.symbolName)|\($0.label)" }) { rebuildAccessories() }
+		}
+	}
+	private var accessoryButtons: [RiftChromeIconButton] = []
+	private let moreButton = RiftChromeIconButton()
+	/// Height of the sidebar's title row (it drags the window); put sidebar content below it.
+	public var titleRowHeight: CGFloat { RiftSidebarMath.titleRowHeight(density: density) }
 	public let contentView: NSView
 
 	public var position: RiftSidebarPosition = .left { didSet { relayout() } }
@@ -110,10 +124,20 @@ open class RiftSidebarContainerView: NSView {
 		wantsLayer = true
 		layer?.backgroundColor = NSColor.clear.cgColor
 		sidebar.wantsLayer = true
-		addSubview(sidebar)
+		sidebarPanel.wantsLayer = true
+		sidebar.autoresizingMask = [.width, .height]
+		sidebarPanel.addSubview(sidebar)
+		sidebarPanel.addSubview(titleRow)
+		titleRow.autoresizingMask = [.width]
+		moreButton.symbolName = "ellipsis"
+		moreButton.toolTip = "More"
+		moreButton.setAccessibilityLabel("More")
+		moreButton.target = self
+		moreButton.action = #selector(showMoreMenu(_:))
+		addSubview(sidebarPanel)
 		revealMask.anchorPoint = .zero
 		revealMask.backgroundColor = NSColor.black.cgColor
-		sidebar.layer?.mask = revealMask
+		sidebarPanel.layer?.mask = revealMask
 		content.wantsLayer = true
 		addSubview(content)
 		resizeHandle.onDrag = { [weak self] x in self?.dragResize(to: x) }
@@ -204,8 +228,8 @@ open class RiftSidebarContainerView: NSView {
 		motion.cancel(Self.foldTrack, finishing: false)
 		// While it unfolds the sidebar is fully opaque; it fades away once folded.
 		if !collapsed {
-			sidebarView.animator().alphaValue = 1
-			sidebarView.alphaValue = 1
+			sidebarPanel.animator().alphaValue = 1
+			sidebarPanel.alphaValue = 1
 		}
 		// The window may be as narrow as the fold leaves it before it gets there.
 		if collapsed { applyWindowMinimumWidth() }
@@ -283,11 +307,11 @@ open class RiftSidebarContainerView: NSView {
 			NSAnimationContext.runAnimationGroup { context in
 				context.duration = animated ? RiftSidebarMath.fadeOutDuration : 0
 				context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-				sidebarView.animator().alphaValue = 0
+				sidebarPanel.animator().alphaValue = 0
 			} completionHandler: { [weak self] in
 				MainActor.assumeIsolated {
 					guard let self, self.isCollapsed, self.collapseProgress >= 1 else { return }
-					self.sidebarView.isHidden = true
+					self.sidebarPanel.isHidden = true
 				}
 			}
 		}
@@ -296,6 +320,71 @@ open class RiftSidebarContainerView: NSView {
 		if let window {
 			NotificationCenter.default.post(
 				name: RiftContainerAnimation.didEndNotification, object: window)
+		}
+	}
+
+	// MARK: Title row buttons
+
+	private func rebuildAccessories() {
+		accessoryButtons.forEach { $0.removeFromSuperview() }
+		accessoryButtons = accessories.enumerated().map { index, accessory in
+			let button = RiftChromeIconButton()
+			button.symbolName = accessory.symbolName
+			button.toolTip = accessory.label
+			button.setAccessibilityLabel(accessory.label)
+			button.tag = index
+			button.target = self
+			button.action = #selector(runAccessory(_:))
+			sidebarPanel.addSubview(button)
+			return button
+		}
+		relayout()
+	}
+
+	@objc private func runAccessory(_ sender: NSButton) {
+		guard accessories.indices.contains(sender.tag) else { return }
+		accessories[sender.tag].action()
+	}
+
+	/// The buttons that don't fit, as a menu under the "more" button.
+	@objc private func showMoreMenu(_ sender: NSButton) {
+		let hidden = accessories.dropFirst(accessoryButtons.filter { !$0.isHidden }.count)
+		let menu = NSMenu()
+		for accessory in hidden {
+			let item = RiftClosureMenuItem(title: accessory.label, handler: accessory.action)
+			item.image = NSImage(systemSymbolName: accessory.symbolName, accessibilityDescription: nil)
+			menu.addItem(item)
+		}
+		menu.popUp(positioning: nil, at: CGPoint(x: 0, y: sender.bounds.maxY + 4), in: sender)
+	}
+
+	/// Lays the buttons out from the sidebar's outer edge toward the window buttons and toggle,
+	/// moving the ones that don't fit into "more".
+	private func layoutAccessories(sidebarWidth w: CGFloat) {
+		let toggle = toggleButton.frame
+		let sidebarMinX = position == .left ? 0 : bounds.width - w
+		// Room the window buttons and toggle take at the sidebar's inner end of the row.
+		let clearance: CGFloat =
+			hidesToggleButton
+			? (position == .left ? (isFullScreen ? 8 : 76) : 0)
+			: (position == .left ? toggle.maxX - sidebarMinX + 2 : sidebarMinX + w - toggle.minX + 2)
+		let row = RiftSidebarMath.titleRowButtons(
+			count: accessories.count, sidebarWidth: w, position: position, density: density,
+			clearance: clearance)
+		for (index, button) in accessoryButtons.enumerated() {
+			if index < row.frames.count {
+				button.isHidden = false
+				button.frame = row.frames[index]
+			} else {
+				button.isHidden = true
+			}
+		}
+		if let more = row.more {
+			if moreButton.superview == nil { sidebarPanel.addSubview(moreButton) }
+			moreButton.isHidden = false
+			moreButton.frame = more
+		} else {
+			moreButton.isHidden = true
 		}
 	}
 
@@ -347,12 +436,14 @@ open class RiftSidebarContainerView: NSView {
 		let visible = w * (1 - collapseProgress)
 		// The sidebar keeps its width and place; the mask shows the part not yet covered.
 		let sidebarX = position == .left ? 0 : bounds.width - w
-		sidebarView.frame = CGRect(x: sidebarX, y: 0, width: w, height: bounds.height)
+		sidebarPanel.frame = CGRect(x: sidebarX, y: 0, width: w, height: bounds.height)
+		sidebarView.frame = sidebarPanel.bounds
+		titleRow.frame = CGRect(x: 0, y: 0, width: w, height: titleRowHeight)
 		revealMask.frame =
 			position == .left
 			? CGRect(x: 0, y: 0, width: visible, height: bounds.height)
 			: CGRect(x: w - visible, y: 0, width: visible, height: bounds.height)
-		if visible > 0 { sidebarView.isHidden = false }
+		if visible > 0 { sidebarPanel.isHidden = false }
 		// In compact density a hairline separates the sidebar from the panes.
 		if dividerLine.superlayer == nil { layer?.addSublayer(dividerLine) }
 		dividerLine.zPosition = 10
@@ -377,6 +468,7 @@ open class RiftSidebarContainerView: NSView {
 		toggleButton.frame = RiftSidebarMath.toggleFrame(
 			position: position, containerWidth: bounds.width, isFullScreen: isFullScreen,
 			density: density)
+		layoutAccessories(sidebarWidth: w)
 		toggleButton.symbolName = position == .left ? "sidebar.left" : "sidebar.right"
 		let label = isCollapsed ? "Show Sidebar" : "Hide Sidebar"
 		if toggleButton.toolTip != label {
@@ -624,4 +716,39 @@ final class RiftClosureMenuItem: NSMenuItem {
 	required init(coder: NSCoder) { fatalError() }
 
 	@objc private func run() { handler() }
+}
+
+/// One of the sidebar's own buttons, shown in its title row.
+public struct RiftSidebarAccessory {
+	public var symbolName: String
+	public var label: String
+	public var action: () -> Void
+
+	public init(symbolName: String, label: String, action: @escaping () -> Void) {
+		self.symbolName = symbolName
+		self.label = label
+		self.action = action
+	}
+}
+
+/// Holds the sidebar's view and chrome.
+final class RiftSidebarPanelView: NSView {
+	override var isFlipped: Bool { true }
+}
+
+/// The sidebar's title row: clicking it drags the window, and double-clicking it does what
+/// double-clicking a titlebar does.
+final class RiftSidebarTitleRowView: NSView {
+	override var isFlipped: Bool { true }
+	override var mouseDownCanMoveWindow: Bool { false }
+	override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+	override func mouseDown(with event: NSEvent) {
+		guard let window else { return }
+		if event.clickCount == 2 {
+			RiftHeadlessWindow.performTitlebarDoubleClick(on: window, event: event)
+		} else {
+			window.performDrag(with: event)
+		}
+	}
 }

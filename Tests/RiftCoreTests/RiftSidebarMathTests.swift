@@ -92,3 +92,26 @@ import Testing
 		#expect(RiftSidebarMath.foldDuration(curve: .snappy) == RiftMotionCurve.snappy.settlingDuration)
 	}
 }
+
+@Suite struct SidebarTitleRowTests {
+	@Test func buttonsRunInFromTheOuterEdge() {
+		let row = RiftSidebarMath.titleRowButtons(
+			count: 2, sidebarWidth: 240, position: .left, density: .comfortable, clearance: 123)
+		#expect(row.frames == [
+			CGRect(x: 202, y: 11, width: 28, height: 28), CGRect(x: 172, y: 11, width: 28, height: 28),
+		])
+		#expect(row.more == nil)
+		let right = RiftSidebarMath.titleRowButtons(
+			count: 1, sidebarWidth: 240, position: .right, density: .compact, clearance: 40)
+		#expect(right.frames == [CGRect(x: 6, y: 5, width: 28, height: 28)])
+	}
+
+	@Test func extraButtonsGoIntoAMoreButton() {
+		// (240 − 10 − 123 + 2) / 30 = 3 slots: two buttons and "more" for the other three.
+		let row = RiftSidebarMath.titleRowButtons(
+			count: 5, sidebarWidth: 240, position: .left, density: .comfortable, clearance: 123)
+		#expect(row.frames.count == 2)
+		#expect(row.more == CGRect(x: 142, y: 11, width: 28, height: 28))
+		#expect(row.overflow == 3)
+	}
+}

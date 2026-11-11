@@ -286,6 +286,7 @@ public struct RiftSidebarSplitView<Sidebar: View, Content: View>: NSViewRepresen
 	private let onCollapseProgressChange: ((CGFloat) -> Void)?
 	private let onPositionChange: ((RiftSidebarPosition) -> Void)?
 	private let onDensityChange: ((RiftChromeDensity) -> Void)?
+	private let accessories: [RiftSidebarAccessory]
 	private let sidebar: Sidebar
 	private let content: Content
 
@@ -295,6 +296,8 @@ public struct RiftSidebarSplitView<Sidebar: View, Content: View>: NSViewRepresen
 	///   - preservesWindowWidth: keep the window's width when folding (the content takes the
 	///     space) instead of shrinking and growing the window.
 	///   - animationStyle: the fold uses this style's chrome curve.
+	///   - accessories: the sidebar's own buttons, in its title row beside the toggle; the ones
+	///     that don't fit go into a "more" menu.
 	///   - onPositionChange, onDensityChange: the user picked a side or density from the toggle
 	///     button's right-click menu. Give either to show the menu.
 	public init(
@@ -309,6 +312,7 @@ public struct RiftSidebarSplitView<Sidebar: View, Content: View>: NSViewRepresen
 		onCollapseProgressChange: ((CGFloat) -> Void)? = nil,
 		onPositionChange: ((RiftSidebarPosition) -> Void)? = nil,
 		onDensityChange: ((RiftChromeDensity) -> Void)? = nil,
+		accessories: [RiftSidebarAccessory] = [],
 		@ViewBuilder sidebar: () -> Sidebar,
 		@ViewBuilder content: () -> Content
 	) {
@@ -323,6 +327,7 @@ public struct RiftSidebarSplitView<Sidebar: View, Content: View>: NSViewRepresen
 		self.onCollapseProgressChange = onCollapseProgressChange
 		self.onPositionChange = onPositionChange
 		self.onDensityChange = onDensityChange
+		self.accessories = accessories
 		self.sidebar = sidebar()
 		self.content = content()
 	}
@@ -333,7 +338,7 @@ public struct RiftSidebarSplitView<Sidebar: View, Content: View>: NSViewRepresen
 		let contentHost: NSHostingView<AnyView>
 		init(_ parent: RiftSidebarSplitView) {
 			self.parent = parent
-			sidebarHost = NSHostingView(rootView: AnyView(parent.sidebar.ignoresSafeArea()))
+			sidebarHost = NSHostingView(rootView: parent.sidebarRoot)
 			contentHost = NSHostingView(rootView: AnyView(parent.content.ignoresSafeArea()))
 			sidebarHost.sizingOptions = []
 			contentHost.sizingOptions = []
@@ -357,7 +362,7 @@ public struct RiftSidebarSplitView<Sidebar: View, Content: View>: NSViewRepresen
 
 	public func updateNSView(_ view: RiftSidebarContainerView, context: Context) {
 		context.coordinator.parent = self
-		context.coordinator.sidebarHost.rootView = AnyView(sidebar.ignoresSafeArea())
+		context.coordinator.sidebarHost.rootView = sidebarRoot
 		context.coordinator.contentHost.rootView = AnyView(content.ignoresSafeArea())
 		apply(to: view)
 		if view.width != width { view.width = width }
@@ -365,7 +370,16 @@ public struct RiftSidebarSplitView<Sidebar: View, Content: View>: NSViewRepresen
 		view.refreshChrome()
 	}
 
+	/// The sidebar content, told how tall the title row is.
+	var sidebarRoot: AnyView {
+		AnyView(
+			sidebar
+				.environment(\.riftSidebarTitleRowHeight, RiftSidebarMath.titleRowHeight(density: density))
+				.ignoresSafeArea())
+	}
+
 	private func apply(to view: RiftSidebarContainerView) {
+		view.accessories = accessories
 		if view.position != position { view.position = position }
 		if view.density != density { view.density = density }
 		view.preservesWindowWidth = preservesWindowWidth
@@ -376,5 +390,18 @@ public struct RiftSidebarSplitView<Sidebar: View, Content: View>: NSViewRepresen
 		if view.hidesToggleButton != hidesToggleButton {
 			view.hidesToggleButton = hidesToggleButton
 		}
+	}
+}
+
+private struct RiftSidebarTitleRowHeightKey: EnvironmentKey {
+	static let defaultValue: CGFloat = 0
+}
+
+extension EnvironmentValues {
+	/// Inside a `RiftSidebarSplitView` sidebar: the height of its title row (the toggle and the
+	/// sidebar's buttons sit in it, and it drags the window). Start your content below it.
+	public var riftSidebarTitleRowHeight: CGFloat {
+		get { self[RiftSidebarTitleRowHeightKey.self] }
+		set { self[RiftSidebarTitleRowHeightKey.self] = newValue }
 	}
 }

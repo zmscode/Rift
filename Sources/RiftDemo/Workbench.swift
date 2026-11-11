@@ -99,7 +99,18 @@ struct WorkbenchWindow: View {
 			animationStyle: settings.motion,
 			onCollapseProgressChange: { foldProgress = $0 },
 			onPositionChange: { settings.sidebarPosition = $0 },
-			onDensityChange: { settings.look = $0 == .compact ? .compact : .comfortable }
+			onDensityChange: { settings.look = $0 == .compact ? .compact : .comfortable },
+			accessories: [
+				RiftSidebarAccessory(symbolName: "square.and.pencil", label: "New Notes") {
+					actions.split(.right, .notes)
+				},
+				RiftSidebarAccessory(symbolName: "arrow.up.left.and.arrow.down.right", label: "Zoom Pane") {
+					actions.zoom()
+				},
+				RiftSidebarAccessory(symbolName: "rectangle.split.3x1", label: "Balance") {
+					actions.balance()
+				},
+			]
 		) {
 			Navigator(
 				layout: layout, focused: $focused, zoomed: zoomed, settings: $settings,

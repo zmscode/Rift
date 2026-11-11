@@ -48,6 +48,8 @@ A split-pane layout component for macOS. Use it from SwiftUI with `RiftLayoutVie
     - The window's minimum width follows the sidebar (720pt open; less once a fold has shrunk it), and a narrower window is widened (`managesWindowMinimumWidth`).
     - Right-clicking the toggle shows a menu for the side (Left Side, Right Side) and density (Comfortable, Compact) when you handle `onPositionChange` / `onDensityChange`.
     - In compact density a hairline separates the sidebar from the panes (`dividerColor`).
+    - The sidebar's top is a title row (50pt, 38pt compact; `titleRowHeight`, or `riftSidebarTitleRowHeight` in the SwiftUI environment) that drags the window, and double-clicking it does the titlebar's double-click action. Start sidebar content below it.
+    - `accessories` puts the sidebar's own buttons in that row, on the toggle's line: 28×28, 2pt apart, from 10pt (6pt compact) in from the outer edge toward the window buttons. The ones that don't fit go into a "more" menu.
     - A swipe that starts over something that scrolls sideways is left to it.
     - Layouts inside keep room in their top pane headers for the window buttons and the toggle: none while a left sidebar is open, growing to 116pt as it folds (76pt beside a right sidebar).
     - `RiftTitlebarMetrics.sidebar(_:)` gives the headless window the matching 42pt titlebar and button offset.

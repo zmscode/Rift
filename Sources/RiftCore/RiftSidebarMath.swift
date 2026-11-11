@@ -82,6 +82,38 @@ public enum RiftSidebarMath {
 		return CGRect(x: x + dx, y: y, width: 28, height: 28)
 	}
 
+	/// The sidebar's title row: as tall as the toggle button plus the same space above and below
+	/// it (50pt, 38pt compact). Sidebar content starts below it.
+	public static func titleRowHeight(density: RiftChromeDensity) -> CGFloat {
+		density == .compact ? 38 : 50
+	}
+
+	/// Where the sidebar's own buttons go in its title row (sidebar coordinates, y down): 28×28,
+	/// 2pt apart, starting 10pt (6pt compact) in from the sidebar's outer edge and running toward
+	/// the window buttons, never into the `clearance` they take. When not all of `count` fit, the
+	/// last slot is a "more" button (`overflow` is how many buttons it holds).
+	public static func titleRowButtons(
+		count: Int, sidebarWidth: CGFloat, position: RiftSidebarPosition,
+		density: RiftChromeDensity, clearance: CGFloat
+	) -> (frames: [CGRect], more: CGRect?, overflow: Int) {
+		guard count > 0 else { return ([], nil, 0) }
+		let compact = density == .compact
+		let margin: CGFloat = compact ? 6 : 10
+		let y: CGFloat = compact ? 5 : 11
+		let slots = max(1, Int(((sidebarWidth - margin - clearance + 2) / 30).rounded(.down)))
+		func frame(_ index: Int) -> CGRect {
+			let offset = CGFloat(index) * 30
+			let x =
+				position == .left
+				? sidebarWidth - margin - 28 - offset
+				: margin + offset
+			return CGRect(x: x, y: y, width: 28, height: 28)
+		}
+		if count <= slots { return ((0..<count).map(frame), nil, 0) }
+		let shown = slots - 1
+		return ((0..<shown).map(frame), frame(shown), count - shown)
+	}
+
 	/// The width of the strip that resizes the sidebar, centred on its inner edge.
 	public static let resizeHandleWidth: CGFloat = 8
 

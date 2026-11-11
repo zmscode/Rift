@@ -3,6 +3,7 @@ import SwiftUI
 
 /// The workbench's sidebar: the open panes, new tools, and the settings that shape the layout.
 struct Navigator: View {
+	@Environment(\.riftSidebarTitleRowHeight) private var titleRowHeight
 	let layout: RiftLayout<String>?
 	@Binding var focused: String?
 	let zoomed: String?
@@ -14,7 +15,7 @@ struct Navigator: View {
 	var body: some View {
 		VStack(alignment: .leading, spacing: 0) {
 			Text("Workbench").font(.system(size: 15, weight: .bold))
-				.padding(.horizontal, 14).padding(.top, 50).padding(.bottom, 8)
+				.padding(.horizontal, 14).padding(.top, titleRowHeight + 2).padding(.bottom, 8)
 			ScrollView {
 				VStack(alignment: .leading, spacing: 14) {
 					openPanes
@@ -39,7 +40,7 @@ struct Navigator: View {
 							}
 						}
 						swatches
-						Toggle("Gradient border", isOn: $settings.gradientBorder)
+						check("Gradient border", $settings.gradientBorder)
 						labelled("Unfocused panes lose") {
 							segmented($settings.unfocusedFade, [.none, .styling, .text, .both]) {
 								switch $0 {
@@ -59,9 +60,9 @@ struct Navigator: View {
 								$0 == .followsSurface ? "Follow" : "Hold"
 							}
 						}
-						Toggle("Balance on split and close", isOn: $settings.autoBalance)
-						Toggle("Ask before closing busy panes", isOn: $settings.asksBeforeClosingBusyPanes)
-						HStack {
+						check("Balance on split and close", $settings.autoBalance)
+						check("Ask before closing busy panes", $settings.asksBeforeClosingBusyPanes)
+						FlowButtons {
 							Button("Balance", action: actions.balance)
 							Button(zoomed == nil ? "Zoom" : "Unzoom", action: actions.zoom)
 							Button("Close others") { actions.closeOthers(nil) }
@@ -80,7 +81,7 @@ struct Navigator: View {
 								}
 							}
 						}
-						Toggle("Keep window width when folding", isOn: $settings.keepsWindowWidth)
+						check("Keep window width when folding", $settings.keepsWindowWidth)
 					}
 				}
 				.padding(.horizontal, 14)
@@ -134,7 +135,7 @@ struct Navigator: View {
 	/// The named border colours, as swatches.
 	private var swatches: some View {
 		let palette = RiftColorPalette()
-		return HStack(spacing: 6) {
+		return LazyVGrid(columns: [GridItem(.adaptive(minimum: 16, maximum: 16), spacing: 6)], spacing: 6) {
 			ForEach(RiftFocusBorderColor.allCases, id: \.self) { name in
 				Button {
 					settings.borderColor = name
@@ -216,13 +217,42 @@ struct Navigator: View {
 		}
 	}
 
+	/// A checkbox whose label wraps in a narrow sidebar.
+	private func check(_ title: String, _ isOn: Binding<Bool>) -> some View {
+		Toggle(isOn: isOn) {
+			Text(title).fixedSize(horizontal: false, vertical: true)
+		}
+	}
+
 	private func segmented<Value: Hashable>(
 		_ selection: Binding<Value>, _ values: [Value], label: @escaping (Value) -> String
 	) -> some View {
-		Picker("", selection: selection) {
-			ForEach(values, id: \.self) { Text(label($0)).tag($0) }
+		// Segments when there's room; a pop-up menu in a narrow sidebar.
+		ViewThatFits(in: .horizontal) {
+			Picker("", selection: selection) {
+				ForEach(values, id: \.self) { Text(label($0)).tag($0) }
+			}
+			.pickerStyle(.segmented)
+			.labelsHidden()
+			.fixedSize()
+			Picker("", selection: selection) {
+				ForEach(values, id: \.self) { Text(label($0)).tag($0) }
+			}
+			.pickerStyle(.menu)
+			.labelsHidden()
 		}
-		.pickerStyle(.segmented)
-		.labelsHidden()
+		.frame(maxWidth: .infinity, alignment: .leading)
+	}
+}
+
+/// Buttons in a row, or stacked when the sidebar is too narrow for the row.
+struct FlowButtons<Content: View>: View {
+	@ViewBuilder let content: () -> Content
+
+	var body: some View {
+		ViewThatFits(in: .horizontal) {
+			HStack { content() }.fixedSize()
+			VStack(alignment: .leading) { content() }
+		}
 	}
 }
