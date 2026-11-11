@@ -50,8 +50,10 @@ public struct RiftConfiguration {
 	/// 76pt covers the close, minimise and zoom buttons. `nil` measures the buttons instead.
 	public var windowButtonInset: CGFloat? = 76
 
-	/// Liquid glass behind panes. Off by default.
-	public var glass = RiftGlassConfiguration()
+	/// What is drawn behind each pane's content (background, glass, fills, strokes), and how
+	/// opaque the content is per state. `nil` (the default) draws nothing; content draws its own
+	/// background. Use `RiftPaneSurfaces.modern(_:)` or your own `RiftPaneSurfaceProviding`.
+	public var paneSurface: (any RiftPaneSurfaceProviding)?
 
 	public var metrics = RiftMetrics()
 	public var snap = RiftSnapConfiguration()
@@ -176,7 +178,7 @@ extension RiftConfiguration {
 		configuration.dividerColor = .clear
 		configuration.paneCornerRadius = 10
 		configuration.dropIndicatorCornerRadius = 8
-		configuration.glass.cornerRadius = 10
+		configuration.paneSurface = RiftPaneSurfaces.modern(.comfortable)
 		return configuration
 	}
 
@@ -188,6 +190,7 @@ extension RiftConfiguration {
 		configuration.dividerColor = NSColor.separatorColor.withAlphaComponent(0.7)
 		configuration.paneCornerRadius = 0
 		configuration.dropIndicatorCornerRadius = 0
+		configuration.paneSurface = RiftPaneSurfaces.modern(.compact)
 		return configuration
 	}
 }

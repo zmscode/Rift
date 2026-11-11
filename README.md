@@ -47,11 +47,11 @@ A split-pane layout component for macOS (AppKit + SwiftUI).
   - An observer gives up by itself if no end notice arrives within 2 seconds.
     - The `RiftView` listens for its own notices too. When an animation begins, it lays the panes out once at the size the view will end up, and holds each pane's content at that size, clipped, until the end notice arrives. Content therefore reflows once instead of on every frame.
 - **Structural activity:** `structuralActivity` and `onStructuralActivityChange` report what is reshaping the panes right now: an animated layout change, a divider drag, a live window resize or a pane drag. Pane content can use this to stop scrollers flashing or to pause redraws.
-- **Glass panes:** set `configuration.glass.isEnabled`.
-  - On macOS 26 and later each pane sits on an `NSGlassEffectView` inside one `NSGlassEffectContainerView` behind the panes. Earlier systems use `NSVisualEffectView` with the `.popover` material.
-  - Settings: style (regular or clear), tint, corner radius, outer rim colour and width, shadows, and `mergeFactor`.
-  - Panes only merge when there is no gap between them.
-  - Pane content must be partly transparent for the glass to show.
+- **Pane surfaces:** Rift draws no pane background itself. Set `configuration.paneSurface` to draw one behind each pane's content.
+  - `RiftPaneSurfaces.modern(.comfortable)` gives glass cards: 10pt corners, a tinted glass layer (liquid glass on macOS 26 and later, a visual-effect material before), a light fill, and in dark mode an overlay backdrop. `.modern(.compact)` gives plain touching panes.
+  - Each surface has a style per state (pane, focused pane, and both again for background windows) and per appearance. A style stacks shadows, a backdrop, glass, two fills and strokes, and sets the content's opacity.
+  - For your own surface, adopt `RiftPaneSurfaceProviding`: make a view, update it for each state, and give the content opacity.
+  - Content must be partly transparent for a glass surface to show.
 - **Accessibility:** each divider is an adjustable `AXSplitter`. Increment and decrement move it by 5%.
 - **Reduce Motion:** animations are skipped when the system setting is on.
 
@@ -114,7 +114,7 @@ swift run RiftDemo
 
 The demo window has a controls sidebar on the right. It has buttons for splitting, closing, focus, swap,
 resize, balance and zoom, plus switches for motion style, the focus border transition, fading, scroller
-suppression, centre drops, glass, the headless window and headers. A status line shows the focused pane
+suppression, centre drops, pane surfaces, the headless window and headers. A status line shows the focused pane
 and what is reshaping the panes. Drag panes by their top-left corner, and drag dividers, with the mouse.
 
 | Shortcut | Action                |

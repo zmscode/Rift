@@ -13,6 +13,20 @@ final class RiftPaneContainerView: RiftFlippedView {
 	let strip = RiftPaneDragStripView()
 	let border = RiftFocusBorderView()
 	private(set) var contentView: NSView
+	/// The pane's surface (background, glass, fills), behind the content.
+	private(set) var surfaceView: NSView?
+	/// The provider `surfaceView` came from, to tell whether it must be rebuilt.
+	var surfaceSource: RiftPaneSurfaces?
+	var hasCustomSurface = false
+
+	func setSurfaceView(_ view: NSView?) {
+		surfaceView?.removeFromSuperview()
+		surfaceView = view
+		guard let view else { return }
+		view.frame = bounds
+		view.autoresizingMask = [.width, .height]
+		addSubview(view, positioned: .below, relativeTo: contentClip)
+	}
 
 	var headerHeight: CGFloat = 24 { didSet { layoutParts() } }
 	/// Space kept above the content when there is no header bar.

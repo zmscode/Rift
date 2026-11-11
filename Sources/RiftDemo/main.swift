@@ -432,8 +432,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 			configure { $0.showsFocusBorder = on }
 		}
 
-		bar.section("Density", "Comfortable: 8pt gaps, rounded cards. Compact: touching panes with 1pt lines.")
-		bar.segmented(["Demo", "Comfortable", "Compact"], selected: 0) { index in
+		bar.section(
+			"Pane surfaces",
+			"Modern comfortable: glass cards with 8pt gaps. Modern compact: touching panes with 1pt lines. Plain: the demo's own coloured panes.")
+		bar.segmented(["Plain", "Comfortable", "Compact"], selected: 0) { index in
 			configure {
 				switch index {
 				case 1:
@@ -441,18 +443,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 					$0.showsDividerLines = false
 					$0.paneCornerRadius = 10
 					$0.dropIndicatorCornerRadius = 8
+					$0.paneSurface = RiftPaneSurfaces.modern(.comfortable)
 				case 2:
 					$0.metrics.dividerThickness = 1
 					$0.showsDividerLines = true
 					$0.dividerColor = NSColor.separatorColor.withAlphaComponent(0.7)
 					$0.paneCornerRadius = 0
 					$0.dropIndicatorCornerRadius = 0
+					$0.paneSurface = RiftPaneSurfaces.modern(.compact)
 				default:
 					$0.metrics.dividerThickness = 4
 					$0.dividerColor = .clear
 					$0.paneCornerRadius = 6
 					$0.dropIndicatorCornerRadius = 8
+					$0.paneSurface = nil
 				}
+			}
+			// Let the glass behind comfortable panes show through.
+			for id in rift.paneLayout?.paneIDs ?? [] {
+				(rift.contentView(for: id) as? DemoPaneView)?.setTranslucent(index == 1)
 			}
 		}
 
@@ -483,16 +492,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 		}
 		bar.toggle("Pinch to zoom", isOn: rift.configuration.allowsPinchToZoom) { on in
 			configure { $0.allowsPinchToZoom = on }
-		}
-		bar.toggle("Glass", isOn: false) { on in
-			configure {
-				$0.glass.isEnabled = on
-				$0.glass.cornerRadius = 10
-				$0.paneCornerRadius = on ? 10 : 6
-			}
-			for id in rift.paneLayout?.paneIDs ?? [] {
-				(rift.contentView(for: id) as? DemoPaneView)?.setTranslucent(on)
-			}
 		}
 
 		bar.section("Window", "Headless keeps 76pt clear of the window buttons.")

@@ -82,7 +82,6 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 	private var mouseMonitor: Any?
 	private var trackingArea: NSTrackingArea?
 	private var headlessWindow: RiftHeadlessWindow?
-	private var glass: RiftGlassController?
 	/// Pane sizes at the target of a running container animation (see RiftContainerAnimation).
 	private var containerAnimationPaneSizes: [PaneID: CGSize]?
 	/// Container animations started with `beginContainerAnimation` and not yet ended.
@@ -224,13 +223,45 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 		container.header.showsCloseButton = configuration.showsCloseButtons
 		container.cornerRadius = configuration.paneCornerRadius
 		container.border.isEnabled = false  // drawn by focusOverlay
+		applySurface(to: container)
+	}
+
+	/// Builds (when the provider changed) and updates a pane's surface, and sets its content alpha.
+	private func applySurface(to container: RiftPaneContainerView) {
+		let provider = configuration.paneSurface
+		if let surfaces = provider as? RiftPaneSurfaces {
+			if container.surfaceSource != surfaces || container.surfaceView == nil {
+				container.setSurfaceView(surfaces.makeSurfaceView())
+				container.surfaceSource = surfaces
+				container.hasCustomSurface = false
+			}
+		} else if let provider {
+			if !container.hasCustomSurface {
+				container.setSurfaceView(provider.makeSurfaceView())
+				container.surfaceSource = nil
+				container.hasCustomSurface = true
+			}
+		} else if container.surfaceView != nil {
+			container.setSurfaceView(nil)
+			container.surfaceSource = nil
+			container.hasCustomSurface = false
+		}
 		let key = window?.isKeyWindow ?? true
+		let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+		let id = containers.first(where: { $0.value === container })?.key
+		let focused = id != nil && id == focusedStorage
+		if let provider, let surface = container.surfaceView {
+			provider.update(
+				surface, for: RiftPaneSurfaceState(isFocused: focused, isWindowActive: key, isDark: dark))
+		}
+		func opacity(_ isFocused: Bool) -> CGFloat? {
+			provider?.contentOpacity(
+				for: RiftPaneSurfaceState(isFocused: isFocused, isWindowActive: key, isDark: dark))
+		}
 		container.activeAlpha =
-			key
-			? 1
-			: (configuration.glass.isEnabled
-				? configuration.inactiveWindowPaneAlpha : configuration.inactiveWindowFocusedPaneAlpha)
-		container.inactiveAlpha = key ? configuration.inactivePaneAlpha : configuration.inactiveWindowPaneAlpha
+			opacity(true) ?? (key ? 1 : configuration.inactiveWindowFocusedPaneAlpha)
+		container.inactiveAlpha =
+			opacity(false) ?? (key ? configuration.inactivePaneAlpha : configuration.inactiveWindowPaneAlpha)
 	}
 
 	private func applyFocusBorderStyle() {
@@ -256,34 +287,8 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 		applyWindowFade()
 		updateTrackingArea()
 		updateWindowChrome()
-		updateGlass()
 		placeContainers(animated: false, added: [])
 		needsDisplay = true
-	}
-
-	/// Creates, updates or removes the glass container behind the panes.
-	private func updateGlass() {
-		guard configuration.glass.isEnabled else {
-			glass?.containerView.removeFromSuperview()
-			glass = nil
-			return
-		}
-		let controller = glass ?? RiftGlassController()
-		if glass == nil {
-			glass = controller
-			controller.containerView.frame = bounds
-			controller.containerView.autoresizingMask = [.width, .height]
-			// Behind every pane.
-			addSubview(controller.containerView, positioned: .below, relativeTo: nil)
-		}
-		controller.apply(configuration.glass, gap: configuration.metrics.dividerThickness)
-	}
-
-	private func placeGlass(_ frames: [PaneID: CGRect], animated: Bool) {
-		guard let glass else { return }
-		var keyed: [AnyHashable: CGRect] = [:]
-		for (id, frame) in frames { keyed[AnyHashable(id)] = frame }
-		glass.place(keyed, animated: animated)
 	}
 
 	private func title(for id: PaneID) -> String { paneTitle?(id) ?? String(describing: id) }
@@ -347,7 +352,6 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 				move.container.frame = move.to
 				if runningLayoutAnimations == 0 { publishPresentation(for: move.id, settled: true) }
 			}
-			placeGlass(geometry.paneFrames, animated: false)
 			syncFocusBorderFrame()
 			return
 		}
@@ -372,7 +376,6 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 					move.container.frame = frame
 					frames[move.id] = frame
 				}
-				self.placeGlass(frames, animated: false)
 				self.syncFocusBorderFrame()
 			},
 			completion: { [weak self] in
@@ -664,6 +667,7 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 
 	private func updateFocusAppearance() {
 		for (id, container) in containers { container.isFocused = id == focusedStorage }
+		applyWindowFade()
 		updateFocusBorder(animated: true)
 	}
 
@@ -746,18 +750,14 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 		observer.riftPanePresentationDidChange(presentation)
 	}
 
-	/// Pane content alpha for the window's key state.
+	/// Surfaces and content alpha for the focus, window key state and appearance.
 	private func applyWindowFade() {
-		let key = window?.isKeyWindow ?? true
-		// With glass, content fades equally in every pane of a background window.
-		let focusedInactive =
-			configuration.glass.isEnabled
-			? configuration.inactiveWindowPaneAlpha : configuration.inactiveWindowFocusedPaneAlpha
-		for container in containers.values {
-			container.activeAlpha = key ? 1 : focusedInactive
-			container.inactiveAlpha =
-				key ? configuration.inactivePaneAlpha : configuration.inactiveWindowPaneAlpha
-		}
+		containers.values.forEach(applySurface(to:))
+	}
+
+	open override func viewDidChangeEffectiveAppearance() {
+		super.viewDidChangeEffectiveAppearance()
+		applyWindowFade()
 	}
 
 	/// Hides (or restores) the scrollers of scroll views inside the panes.
