@@ -4,8 +4,11 @@ import AppKit
 /// running edge to edge, and the system close/minimize/zoom buttons kept but centred in a row of
 /// `rowHeight` points at the top, so they can sit inside your own header.
 ///
-/// Only public AppKit API is used. The buttons' titlebar container is resized with ordinary
-/// `NSView` frame calls, and re-applied whenever AppKit lays the titlebar out again.
+/// Where AppKit offers them, the titlebar height and button offset are set through the window's
+/// own titlebar settings (`customTitlebarHeight` on the frame view and
+/// `standardWindowButtonGroupOffset` on the window), so AppKit itself lays the buttons out. If
+/// either is missing, the buttons' titlebar container is resized with ordinary `NSView` frame
+/// calls instead, and re-applied whenever AppKit lays the titlebar out again.
 @MainActor
 public final class RiftHeadlessWindow {
 	public private(set) weak var window: NSWindow?
@@ -31,6 +34,8 @@ public final class RiftHeadlessWindow {
 	private var originalButtonX: [NSWindow.ButtonType: CGFloat] = [:]
 	private var observers: [NSObjectProtocol] = []
 	private var isLayingOut = false
+	/// Whether AppKit's titlebar settings are in use (rather than moving the container by hand).
+	public private(set) var usesTitlebarSettings = false
 
 	private static let buttonTypes: [NSWindow.ButtonType] = [
 		.closeButton, .miniaturizeButton, .zoomButton,
@@ -70,6 +75,19 @@ public final class RiftHeadlessWindow {
 		window.titlebarSeparatorStyle = .none
 		window.toolbar = nil
 
+		if Self.supportsTitlebarSettings(window) {
+			usesTitlebarSettings = true
+			let center = NotificationCenter.default
+			for name in [NSWindow.didExitFullScreenNotification, NSWindow.didBecomeKeyNotification] {
+				observers.append(
+					center.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+						MainActor.assumeIsolated { self?.layoutButtons() }
+					})
+			}
+			layoutButtons()
+			return
+		}
+
 		let center = NotificationCenter.default
 		let names: [Notification.Name] = [
 			NSWindow.didResizeNotification,
@@ -104,6 +122,10 @@ public final class RiftHeadlessWindow {
 		observers.forEach(NotificationCenter.default.removeObserver)
 		observers.removeAll()
 		guard let window, let saved else { return }
+		if usesTitlebarSettings {
+			Self.applyTitlebarSettings(to: window, height: -1, offset: CGPoint(x: 0, y: -0.0))
+			usesTitlebarSettings = false
+		}
 		for type in Self.buttonTypes {
 			if let button = window.standardWindowButton(type), let x = originalButtonX[type] {
 				button.setFrameOrigin(CGPoint(x: x, y: button.frame.origin.y))
@@ -129,6 +151,14 @@ public final class RiftHeadlessWindow {
 	private func layoutButtons() {
 		guard !isLayingOut, saved != nil, let window else { return }
 		defer { onLayout?() }
+		if usesTitlebarSettings {
+			// AppKit centres the buttons in the titlebar height; the offset shifts the group
+			// (its y is stored negated, so a positive value would move the buttons up).
+			let height = max(rowHeight, (window.standardWindowButton(.closeButton)?.frame.height ?? 16) + 2)
+			Self.applyTitlebarSettings(
+				to: window, height: height, offset: CGPoint(x: horizontalOffset, y: -0.0))
+			return
+		}
 		guard !window.styleMask.contains(.fullScreen),
 			let close = window.standardWindowButton(.closeButton),
 			let titlebarView = close.superview,
@@ -155,6 +185,32 @@ public final class RiftHeadlessWindow {
 				x: x + horizontalOffset,
 				y: ((titlebarView.bounds.height - button.frame.height) / 2).rounded())
 			if button.frame.origin != origin { button.setFrameOrigin(origin) }
+		}
+	}
+
+	private static let heightKey = "customTitlebarHeight"
+	private static let offsetKey = "standardWindowButtonGroupOffset"
+
+	/// Whether the frame view and window accept the titlebar height and button offset settings.
+	static func supportsTitlebarSettings(_ window: NSWindow) -> Bool {
+		guard let frameView = window.contentView?.superview else { return false }
+		return frameView.responds(to: NSSelectorFromString(heightKey))
+			&& frameView.responds(to: NSSelectorFromString("setCustomTitlebarHeight:"))
+			&& window.responds(to: NSSelectorFromString(offsetKey))
+			&& window.responds(to: NSSelectorFromString("setStandardWindowButtonGroupOffset:"))
+	}
+
+	/// Sets the titlebar height (-1 = AppKit's default) and the button group offset, only when they
+	/// change.
+	static func applyTitlebarSettings(to window: NSWindow, height: CGFloat, offset: CGPoint) {
+		guard let frameView = window.contentView?.superview else { return }
+		let currentHeight = (frameView.value(forKey: heightKey) as? NSNumber)?.doubleValue
+		if currentHeight != Double(height) {
+			frameView.setValue(NSNumber(value: Double(height)), forKey: heightKey)
+		}
+		let currentOffset = (window.value(forKey: offsetKey) as? NSValue)?.pointValue
+		if currentOffset != offset {
+			window.setValue(NSValue(point: offset), forKey: offsetKey)
 		}
 	}
 
