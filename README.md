@@ -61,7 +61,7 @@ A split-pane layout component for macOS (AppKit + SwiftUI).
 | ---------- | ------------------------------------------------------------------------------------------------------------ |
 | `RiftCore` | Layout tree, geometry, divider-drag maths, drop zones, arrangement. Pure Swift and fully unit-tested.        |
 | `Rift`     | `RiftView` (AppKit), the pane drag session, and the SwiftUI wrapper `RiftLayoutView`. Re-exports `RiftCore`. |
-| `RiftDemo` | A demo app with two windows and keyboard shortcuts.                                                          |
+| `RiftDemo` | A demo app with a controls sidebar for trying every feature.                                                  |
 
 ## Usage
 
@@ -112,19 +112,14 @@ swift test
 swift run RiftDemo
 ```
 
-Demo shortcuts:
+The demo window has a controls sidebar on the right. It has buttons for splitting, closing, focus, swap,
+resize, balance and zoom, plus switches for motion style, the focus border transition, fading, scroller
+suppression, centre drops, glass, the headless window and headers. A status line shows the focused pane
+and what is reshaping the panes. Drag panes by their top-left corner, and drag dividers, with the mouse.
 
-| Shortcut    | Action                    |
-| ----------- | ------------------------- |
-| ⌘D / ⇧⌘D    | Split right / down        |
-| ⌥⌘D / ⇧⌥⌘D  | Split full width / height |
-| ⌘W          | Close pane                |
-| ⌥⌘ + arrow  | Move focus                |
-| ⌃⌘ + arrow  | Grow the pane             |
-| ⇧⌥⌘ + arrow | Swap with neighbour       |
-| ⌃⌘=         | Balance panes             |
-| ⇧⌘↩         | Zoom the pane             |
-| ⌃⌘H         | Toggle header bars        |
-| ⌃⌘T         | Toggle headless window    |
-| ⌃⌘S         | Fold a sidebar (shows resize notices) |
-| ⌃⌘G         | Toggle glass panes        |
+| Shortcut | Action                |
+| -------- | --------------------- |
+| ⌘D / ⇧⌘D | Split right / down    |
+| ⌘W       | Close pane            |
+| ⌘N       | New window            |
+| ⌃⌘S      | Hide or show controls |
