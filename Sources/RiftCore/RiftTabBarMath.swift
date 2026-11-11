@@ -18,6 +18,8 @@ public enum RiftTabBarMath {
 	public static let geometryDuration: TimeInterval = 0.28
 	/// The selected tab's and hover's corner radius (capped at half the tab's height).
 	public static let tabCornerRadius: CGFloat = 16.5
+	/// How far a dragged tab (and the track that follows it) can travel past the strip's ends.
+	public static let trackOvershoot: CGFloat = 60
 	/// The track's corner radius.
 	public static let trackCornerRadius: CGFloat = 40
 

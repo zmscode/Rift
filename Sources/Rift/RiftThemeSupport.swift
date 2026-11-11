@@ -57,15 +57,46 @@ extension NSColor {
 }
 
 extension RiftSurfaceStyle {
+	/// This style with its colours taken from `theme`: each colour with a role becomes that role's
+	/// colour at its own alpha (as Rex's material styles bind colours to roles), and any other
+	/// canvas-grey colour becomes the theme's canvas.
 	func rift_themed(_ theme: RiftTheme) -> Self {
-		var style = self
-		let canvas = theme[.canvas]
-		if let tint = style.glass?.tint { style.glass?.tint = tint.rift_replacingCanvas(with: canvas) }
-		if let color = style.backdrop?.color {
-			style.backdrop?.color = color.rift_replacingCanvas(with: canvas)
+		func resolve(_ color: NSColor, _ role: RiftColorRole?) -> NSColor {
+			guard let role else { return color.rift_replacingCanvas(with: theme[.canvas]) }
+			let alpha = Double(color.usingColorSpace(.sRGB)?.alphaComponent ?? 1)
+			return NSColor(rift: theme[role].withAlpha(alpha * theme[role].alpha))
 		}
-		if let color = style.fill?.color { style.fill?.color = color.rift_replacingCanvas(with: canvas) }
+		var style = self
+		func themed(_ fill: RiftSurfaceFill) -> RiftSurfaceFill { Self.rift_themedFill(fill, theme) }
+		if let glass = style.glass, let tint = glass.tint {
+			style.glass?.tint = resolve(tint, glass.tintRole)
+		}
+		style.backdrop = style.backdrop.map(themed)
+		style.fill = style.fill.map(themed)
+		style.secondFill = style.secondFill.map(themed)
+		style.strokes = style.strokes.map { stroke in
+			var stroke = stroke
+			stroke.color = resolve(stroke.color, stroke.role)
+			return stroke
+		}
+		style.shadows = style.shadows.map { shadow in
+			var shadow = shadow
+			shadow.color = resolve(shadow.color, shadow.role)
+			return shadow
+		}
 		return style
+	}
+
+	/// A fill in `theme`'s colours (see `rift_themed`).
+	static func rift_themedFill(_ fill: RiftSurfaceFill, _ theme: RiftTheme) -> RiftSurfaceFill {
+		var fill = fill
+		if let role = fill.role {
+			let alpha = Double(fill.color.usingColorSpace(.sRGB)?.alphaComponent ?? 1)
+			fill.color = NSColor(rift: theme[role].withAlpha(alpha * theme[role].alpha))
+		} else {
+			fill.color = fill.color.rift_replacingCanvas(with: theme[.canvas])
+		}
+		return fill
 	}
 }
 
@@ -89,7 +120,17 @@ extension RiftWindowSurface {
 	public func themed(_ selection: RiftThemeSelection) -> RiftWindowSurface {
 		func look(_ l: Look, _ theme: RiftTheme) -> Look {
 			var look = l
-			look.tint = look.tint?.rift_replacingCanvas(with: theme[.canvas])
+			if let tint = look.tint {
+				if let role = look.tintRole {
+					let alpha = Double(tint.usingColorSpace(.sRGB)?.alphaComponent ?? 1)
+					look.tint = NSColor(rift: theme[role].withAlpha(alpha * theme[role].alpha))
+				} else {
+					look.tint = tint.rift_replacingCanvas(with: theme[.canvas])
+				}
+			}
+			if let fill = look.backdrop {
+				look.backdrop = RiftSurfaceStyle.rift_themedFill(fill, theme)
+			}
 			return look
 		}
 		var surface = self

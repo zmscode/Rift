@@ -58,10 +58,14 @@ public struct RiftPaneSurface: Equatable {
 public struct RiftSurfaceFill: Hashable, Sendable {
 	public var color: NSColor
 	public var blendMode: RiftDividerBlendMode
+	/// The theme role this colour stands for. A themed surface takes the role's colour at this
+	/// colour's alpha; without a theme (or a role) `color` is drawn as it is.
+	public var role: RiftColorRole?
 
-	public init(color: NSColor, blendMode: RiftDividerBlendMode = .normal) {
+	public init(color: NSColor, blendMode: RiftDividerBlendMode = .normal, role: RiftColorRole? = nil) {
 		self.color = color
 		self.blendMode = blendMode
+		self.role = role
 	}
 }
 
@@ -70,15 +74,18 @@ public struct RiftSurfaceGlass: Hashable, Sendable {
 	public enum Style: Sendable, Hashable { case regular, clear }
 	public var style: Style
 	public var tint: NSColor?
+	/// The theme role the tint stands for (see `RiftSurfaceFill.role`).
+	public var tintRole: RiftColorRole?
 	/// Material used where liquid glass isn't available.
 	public var fallbackMaterial: NSVisualEffectView.Material
 
 	public init(
-		style: Style = .regular, tint: NSColor? = nil,
+		style: Style = .regular, tint: NSColor? = nil, tintRole: RiftColorRole? = nil,
 		fallbackMaterial: NSVisualEffectView.Material = .hudWindow
 	) {
 		self.style = style
 		self.tint = tint
+		self.tintRole = tintRole
 		self.fallbackMaterial = fallbackMaterial
 	}
 }
@@ -88,11 +95,17 @@ public struct RiftSurfaceStroke: Hashable, Sendable {
 	public var color: NSColor
 	public var width: CGFloat
 	public var blendMode: RiftDividerBlendMode
+	/// The theme role this colour stands for (see `RiftSurfaceFill.role`).
+	public var role: RiftColorRole?
 
-	public init(color: NSColor, width: CGFloat = 1, blendMode: RiftDividerBlendMode = .normal) {
+	public init(
+		color: NSColor, width: CGFloat = 1, blendMode: RiftDividerBlendMode = .normal,
+		role: RiftColorRole? = nil
+	) {
 		self.color = color
 		self.width = width
 		self.blendMode = blendMode
+		self.role = role
 	}
 }
 
@@ -102,8 +115,14 @@ public struct RiftSurfaceShadow: Hashable, Sendable {
 	public var opacity: Float
 	public var radius: CGFloat
 	public var offset: CGSize
+	/// The theme role this colour stands for (see `RiftSurfaceFill.role`).
+	public var role: RiftColorRole?
 
-	public init(color: NSColor = .black, opacity: Float, radius: CGFloat, offset: CGSize = .zero) {
+	public init(
+		color: NSColor = .black, opacity: Float, radius: CGFloat, offset: CGSize = .zero,
+		role: RiftColorRole? = nil
+	) {
+		self.role = role
 		self.color = color
 		self.opacity = opacity
 		self.radius = radius
@@ -199,8 +218,9 @@ public struct RiftPaneSurfaces: Hashable, Sendable, RiftPaneSurfaceProviding {
 			var darkPane = RiftSurfaceStyle()
 			darkPane.cornerRadius = 10
 			darkPane.contentOpacity = 0.7
-			darkPane.backdrop = RiftSurfaceFill(color: rgb(canvas, 0.48), blendMode: .overlay)
-			darkPane.glass = RiftSurfaceGlass(tint: rgb(canvas, 0.3))
+			darkPane.backdrop = RiftSurfaceFill(
+				color: rgb(canvas, 0.48), blendMode: .overlay, role: .canvas)
+			darkPane.glass = RiftSurfaceGlass(tint: rgb(canvas, 0.3), tintRole: .canvas)
 			darkPane.fill = RiftSurfaceFill(color: rgb(0, 0.15))
 			var darkFocused = darkPane
 			darkFocused.contentOpacity = 1
@@ -216,7 +236,7 @@ public struct RiftPaneSurfaces: Hashable, Sendable, RiftPaneSurfaceProviding {
 			var lightPane = RiftSurfaceStyle()
 			lightPane.cornerRadius = 10
 			lightPane.contentOpacity = 0.7
-			lightPane.glass = RiftSurfaceGlass(tint: rgb(canvas, 0.25))
+			lightPane.glass = RiftSurfaceGlass(tint: rgb(canvas, 0.25), tintRole: .canvas)
 			lightPane.fill = RiftSurfaceFill(color: rgb(0, 0.05), blendMode: .plusDarker)
 			var lightFocused = lightPane
 			lightFocused.contentOpacity = 1
@@ -248,7 +268,8 @@ public struct RiftPaneSurfaces: Hashable, Sendable, RiftPaneSurfaceProviding {
 
 			var lightPane = RiftSurfaceStyle()
 			lightPane.contentOpacity = 0.7
-			lightPane.fill = RiftSurfaceFill(color: rgb(0.964706, 0.8), blendMode: .plusDarker)
+			lightPane.fill = RiftSurfaceFill(
+				color: rgb(0.964706, 0.8), blendMode: .plusDarker, role: .surfaceRaised)
 			var lightFocused = lightPane
 			lightFocused.contentOpacity = 1
 			lightFocused.fill = RiftSurfaceFill(color: rgb(0.156863, 0.3))
@@ -276,14 +297,17 @@ public struct RiftWindowSurface: Hashable, Sendable {
 		/// The material shown behind the window.
 		public var material: NSVisualEffectView.Material?
 		public var tint: NSColor?
+		/// The theme role the tint stands for (see `RiftSurfaceFill.role`).
+		public var tintRole: RiftColorRole?
 		public var backdrop: RiftSurfaceFill?
 
 		public init(
 			material: NSVisualEffectView.Material? = .hudWindow, tint: NSColor? = nil,
-			backdrop: RiftSurfaceFill? = nil
+			tintRole: RiftColorRole? = nil, backdrop: RiftSurfaceFill? = nil
 		) {
 			self.material = material
 			self.tint = tint
+			self.tintRole = tintRole
 			self.backdrop = backdrop
 		}
 	}
@@ -354,11 +378,13 @@ public struct RiftWindowSurface: Hashable, Sendable {
 		}
 		let canvas: CGFloat = 0.117647
 		let dark = Look(
-			tint: rgb(canvas, 0.5),
+			tint: rgb(canvas, 0.5), tintRole: .canvas,
 			backdrop: RiftSurfaceFill(color: rgb(0, 0.6), blendMode: .overlay))
 		var inactiveDark = dark
 		if density == .comfortable { inactiveDark.tint = rgb(1, 0.5) }
-		let light = Look(tint: density == .compact ? rgb(1, 0.7) : rgb(canvas, 0.7))
+		// Compact light takes the system's canvas, not the theme's.
+		let light = density == .compact
+			? Look(tint: rgb(1, 0.7)) : Look(tint: rgb(canvas, 0.7), tintRole: .canvas)
 		return RiftWindowSurface(
 			cornerRadius: 12, light: light, dark: dark, inactiveWindowDark: inactiveDark,
 			lightInnerShadow: InnerShadow(

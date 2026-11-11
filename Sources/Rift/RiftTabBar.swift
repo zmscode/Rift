@@ -93,20 +93,24 @@ public struct RiftTabSurfaces: Hashable, Sendable {
 
 		var lightTrack = RiftSurfaceStyle()
 		lightTrack.cornerRadius = RiftTabBarMath.trackCornerRadius
-		lightTrack.fill = RiftSurfaceFill(color: rgb(0, 0.05), blendMode: compact ? .normal : .plusDarker)
+		lightTrack.fill = RiftSurfaceFill(
+			color: rgb(0, 0.05), blendMode: compact ? .normal : .plusDarker, role: .content)
 		var lightInactiveTrack = RiftSurfaceStyle()
 		lightInactiveTrack.cornerRadius = RiftTabBarMath.trackCornerRadius
 		var lightInactiveSelection = RiftSurfaceStyle()
 		lightInactiveSelection.cornerRadius = RiftTabBarMath.tabCornerRadius
-		lightInactiveSelection.glass = RiftSurfaceGlass(tint: compact ? rgb(1, 0.25) : rgb(canvas, 0.25))
+		lightInactiveSelection.glass = RiftSurfaceGlass(
+			tint: compact ? rgb(1, 0.25) : rgb(canvas, 0.25), tintRole: .canvas)
 		var lightSelection = lightInactiveSelection
 		lightSelection.shadows = [
 			RiftSurfaceShadow(
-				color: rgb(0, 0.4), opacity: 0.15, radius: 3.5, offset: CGSize(width: 0, height: 1.5))
+				color: rgb(0, 0.4), opacity: 0.15, radius: 3.5, offset: CGSize(width: 0, height: 1.5),
+				role: .content)
 		]
 		var lightHover = RiftSurfaceStyle()
 		lightHover.cornerRadius = RiftTabBarMath.tabCornerRadius
-		lightHover.fill = RiftSurfaceFill(color: rgb(0, 0.05), blendMode: .plusDarker)
+		lightHover.fill = RiftSurfaceFill(
+			color: rgb(0, 0.05), blendMode: .plusDarker, role: .contentSecondary)
 
 		return RiftTabSurfaces(
 			light: Looks(
@@ -118,7 +122,8 @@ public struct RiftTabSurfaces: Hashable, Sendable {
 				trackInset: compact ? 1 : 0))
 	}
 
-	/// These looks with their canvas-grey tints taken from the theme's canvas colour.
+	/// These looks in a theme's colours: role-bound colours (the light track, hover, selection tint
+	/// and shadow) take their role's colour, canvas greys the theme's canvas.
 	public func themed(_ selection: RiftThemeSelection) -> RiftTabSurfaces {
 		func looks(_ l: Looks, _ theme: RiftTheme) -> Looks {
 			Looks(
@@ -332,7 +337,6 @@ public final class RiftTabBarView<ID: Hashable>: NSView, RiftPaneDropAccepting {
 		let animated = animatesNextLayout
 		animatesNextLayout = false
 		let track = layout.trackFrame
-		place(trackSurface, track.insetBy(dx: trackInset - 2, dy: trackInset - 2), animated: animated)
 		place(clipView, track.insetBy(dx: -2, dy: -4), animated: false)
 		let toClip = CGPoint(x: -(track.minX - 2), y: -(track.minY - 4))
 
@@ -372,7 +376,59 @@ public final class RiftTabBarView<ID: Hashable>: NSView, RiftPaneDropAccepting {
 		} else {
 			selectionSurface.isHidden = true
 		}
+		updateTrack(animated: animated)
 		updateChrome()
+	}
+
+	/// The track hugs the tabs: the first through the last grown by 2pt (no wider than the strip
+	/// plus 4pt), stretched to keep 2pt around a dragged tab, and faded out while there is only
+	/// one tab (unless tabs fill the bar).
+	private func updateTrack(animated: Bool) {
+		guard let resolved else { return }
+		let fromClip = CGPoint(x: resolved.trackFrame.minX - 2, y: resolved.trackFrame.minY - 4)
+		var frames = resolved.tabFrames
+		if let draggedTab, let view = itemViews[draggedTab] {
+			frames.append(view.frame.offsetBy(dx: fromClip.x, dy: fromClip.y))
+		}
+		guard let first = frames.first else {
+			trackSurface.alphaValue = 0
+			return
+		}
+		var hull = frames.dropFirst().reduce(first) { $0.union($1) }.insetBy(dx: -2, dy: -2)
+		if draggedTab == nil {
+			hull.size.width = min(hull.width, resolved.trackFrame.width + 4)
+		} else {
+			// Vertically it follows a quarter of the dragged tab's travel.
+			let base = resolved.tabFrames.first.map { $0.insetBy(dx: -2, dy: -2) } ?? hull
+			hull.origin.y = base.minY + (min(hull.minY - base.minY, 0) + max(hull.maxY - base.maxY, 0)) / 4
+			hull.size.height = base.height
+		}
+		hull = hull.insetBy(dx: trackInset, dy: trackInset)
+		// Clipped to the strip the tabs scroll in.
+		let strip = resolved.trackFrame.insetBy(dx: -2, dy: -2)
+		hull = hull.intersection(strip.insetBy(dx: -RiftTabBarMath.trackOvershoot, dy: -4))
+		let duration = RiftTabBarMath.geometryDuration / 1.5
+		if animated, trackSurface.frame != hull, !trackSurface.frame.isEmpty {
+			NSAnimationContext.runAnimationGroup { context in
+				context.duration = duration
+				context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1)
+				context.allowsImplicitAnimation = true
+				trackSurface.animator().frame = hull
+			}
+		} else if draggedTab == nil || !animated {
+			trackSurface.frame = hull
+		}
+		let alpha: CGFloat = tabs.count == 1 && !fillsAvailableSpace ? 0 : 1
+		if trackSurface.alphaValue != alpha {
+			if animated {
+				NSAnimationContext.runAnimationGroup { context in
+					context.duration = duration
+					trackSurface.animator().alphaValue = alpha
+				}
+			} else {
+				trackSurface.alphaValue = alpha
+			}
+		}
 	}
 
 	private func place(_ view: NSView, _ frame: CGRect, animated: Bool) {
@@ -651,6 +707,7 @@ public final class RiftTabBarView<ID: Hashable>: NSView, RiftPaneDropAccepting {
 				height: track.height))
 		view.setFrameOrigin(origin)
 		if selectedTab == id { selectionSurface.frame = view.frame }
+		updateTrack(animated: false)
 
 		guard let current = order.firstIndex(of: id) else { return }
 		let mids = resolved.tabFrames.map { $0.midX - (resolved.trackFrame.minX - 2) }
