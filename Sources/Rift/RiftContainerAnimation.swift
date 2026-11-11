@@ -107,6 +107,7 @@ public final class RiftContainerAnimationObserver {
 
 	isolated deinit {
 		tokens.forEach(NotificationCenter.default.removeObserver)
+		if let liveResizeToken { NotificationCenter.default.removeObserver(liveResizeToken) }
 	}
 
 	private func isOwnWindow(_ object: ObjectIdentifier?) -> Bool {
@@ -144,15 +145,63 @@ public final class RiftContainerAnimationObserver {
 		}
 	}
 
+	private var liveResizeToken: NSObjectProtocol?
+
+	/// Clears the target size first, then releases the hold, unless the window is still being
+	/// resized live, in which case the hold lasts until that ends.
 	private func finish() {
 		generation += 1
-		if isHolding {
-			isHolding = false
-			onHoldChange?(false)
-		}
 		if targetSize != nil {
 			targetSize = nil
 			onTargetSize?(nil)
 		}
+		guard isHolding else { return }
+		if let window = view?.window, window.inLiveResize {
+			guard liveResizeToken == nil else { return }
+			liveResizeToken = NotificationCenter.default.addObserver(
+				forName: NSWindow.didEndLiveResizeNotification, object: window, queue: .main
+			) { [weak self] _ in
+				MainActor.assumeIsolated { self?.releaseHoldAfterLiveResize() }
+			}
+			return
+		}
+		isHolding = false
+		onHoldChange?(false)
 	}
+
+	private func releaseHoldAfterLiveResize() {
+		if let token = liveResizeToken { NotificationCenter.default.removeObserver(token) }
+		liveResizeToken = nil
+		guard isHolding else { return }
+		isHolding = false
+		onHoldChange?(false)
+	}
+}
+
+/// What a pane's content can know about how it is being presented.
+public struct RiftPanePresentation: Equatable, Sendable {
+	/// `false` while the layout is moving; content such as a terminal can wait for `true` before
+	/// reporting its new size.
+	public var isLayoutSettled: Bool
+	/// 1 while this pane is zoomed, otherwise 0.
+	public var zoomFraction: CGFloat
+	/// The content's current size.
+	public var contentSize: CGSize
+	/// While the layout moves, the size the content will end at.
+	public var targetSize: CGSize?
+
+	public init(
+		isLayoutSettled: Bool, zoomFraction: CGFloat, contentSize: CGSize, targetSize: CGSize?
+	) {
+		self.isLayoutSettled = isLayoutSettled
+		self.zoomFraction = zoomFraction
+		self.contentSize = contentSize
+		self.targetSize = targetSize
+	}
+}
+
+/// Adopt in a pane's content view to hear about presentation changes.
+@MainActor
+public protocol RiftPanePresentationObserving: AnyObject {
+	func riftPanePresentationDidChange(_ presentation: RiftPanePresentation)
 }

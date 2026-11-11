@@ -11,7 +11,7 @@ import RiftCore
 ///
 /// Programmatic changes (`setLayout`, `focusedPane =`) don't call the callbacks; user actions and the
 /// command methods (`split`, `close`, …) do.
-open class RiftView<PaneID: Hashable & Sendable>: NSView {
+open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 	// MARK: Public state
 
 	public private(set) var paneLayout: RiftLayout<PaneID>?
@@ -60,10 +60,12 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 	/// departing copy fades out during a crossfade.
 	private let focusOverlay = RiftFocusBorderView()
 	private let departingFocusOverlay = RiftFocusBorderView()
+	private let dividerLines = RiftDividerLinesView()
 	private var borderPane: PaneID?
 	private var borderGlides = false
 	private var keyObservers: [NSObjectProtocol] = []
 	private var pinch = RiftPinchRecognizer()
+	private var presentations: [PaneID: RiftPanePresentation] = [:]
 	private static var borderTrack: AnyHashable { "rift.focusBorder" }
 	private static var layoutTrack: AnyHashable { "rift.layout" }
 
@@ -103,6 +105,8 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 		wantsLayer = true
 		dropIndicator.isHidden = true
 		addSubview(dropIndicator)
+		dividerLines.autoresizingMask = [.width, .height]
+		addSubview(dividerLines, positioned: .below, relativeTo: dropIndicator)
 		for overlay in [departingFocusOverlay, focusOverlay] {
 			overlay.isFocused = true
 			overlay.isHidden = true
@@ -214,11 +218,16 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 	private func applyConfiguration(to container: RiftPaneContainerView) {
 		container.showsHeader = configuration.showsPaneHeaders
 		container.headerHeight = configuration.headerHeight
+		container.headerlessTopInset = configuration.headerlessTopInset
 		container.header.showsCloseButton = configuration.showsCloseButtons
 		container.cornerRadius = configuration.paneCornerRadius
 		container.border.isEnabled = false  // drawn by focusOverlay
 		let key = window?.isKeyWindow ?? true
-		container.activeAlpha = key ? 1 : configuration.inactiveWindowFocusedPaneAlpha
+		container.activeAlpha =
+			key
+			? 1
+			: (configuration.glass.isEnabled
+				? configuration.inactiveWindowPaneAlpha : configuration.inactiveWindowFocusedPaneAlpha)
 		container.inactiveAlpha = key ? configuration.inactivePaneAlpha : configuration.inactiveWindowPaneAlpha
 	}
 
@@ -330,13 +339,21 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 		}
 		refreshHeaderChrome(geometry.paneFrames)
 		refreshMovementLock()
+		refreshDividerLines()
 		guard animate, let curve = curveOverride ?? configuration.animationStyle.paneCurve else {
-			for move in moves { move.container.frame = move.to }
+			for move in moves {
+				move.container.frame = move.to
+				if runningLayoutAnimations == 0 { publishPresentation(for: move.id, settled: true) }
+			}
 			placeGlass(geometry.paneFrames, animated: false)
 			syncFocusBorderFrame()
 			return
 		}
 		popping.forEach(popIn)
+		for move in moves {
+			publishPresentation(
+				for: move.id, settled: false, target: contentSize(forPaneFrame: move.to))
+		}
 		let timing = RiftMotionTiming(duration: curve.transitionDuration, curve: curve)
 		let changed = moves.filter { $0.from != $0.to }
 		runningLayoutAnimations += 1
@@ -358,6 +375,10 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 			},
 			completion: { [weak self] in
 				guard let self else { return }
+				// The layout has settled once the last running motion ends.
+				if self.runningLayoutAnimations == 1 {
+					for id in self.containers.keys { self.publishPresentation(for: id, settled: true) }
+				}
 				// Pane content keeps scrollers hidden for 0.15s after the motion settles.
 				DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
 					guard let self else { return }
@@ -395,12 +416,13 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 		window?.invalidateCursorRects(for: self)
 	}
 
-	open override func draw(_ dirtyRect: NSRect) {
-		guard configuration.showsDividerLines, zoomedPane == nil else { return }
-		configuration.dividerColor.setFill()
-		for divider in displayGeometry().dividers where divider.line.intersects(dirtyRect) {
-			divider.line.fill()
-		}
+	func refreshDividerLines() {
+		dividerLines.frame = bounds
+		let rects =
+			configuration.showsDividerLines && zoomedPane == nil
+			? displayGeometry().dividers.map { dividerLines.convert($0.line, from: self) } : []
+		dividerLines.show(
+			rects, color: configuration.dividerColor, blendMode: configuration.dividerBlendMode)
 	}
 
 	// MARK: Commands
@@ -703,11 +725,34 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 		}
 	}
 
+	private func contentSize(forPaneFrame frame: CGRect) -> CGSize {
+		let top =
+			configuration.showsPaneHeaders ? configuration.headerHeight : configuration.headerlessTopInset
+		return CGSize(width: frame.width, height: max(0, frame.height - top))
+	}
+
+	/// Tells content that adopts `RiftPanePresentationObserving` about a change, if there is one.
+	private func publishPresentation(for id: PaneID, settled: Bool, target: CGSize? = nil) {
+		guard let container = containers[id],
+			let observer = container.contentView as? RiftPanePresentationObserving
+		else { return }
+		let presentation = RiftPanePresentation(
+			isLayoutSettled: settled, zoomFraction: zoomedPane == id ? 1 : 0,
+			contentSize: container.contentView.bounds.size, targetSize: settled ? nil : target)
+		guard presentations[id] != presentation else { return }
+		presentations[id] = presentation
+		observer.riftPanePresentationDidChange(presentation)
+	}
+
 	/// Pane content alpha for the window's key state.
 	private func applyWindowFade() {
 		let key = window?.isKeyWindow ?? true
+		// With glass, content fades equally in every pane of a background window.
+		let focusedInactive =
+			configuration.glass.isEnabled
+			? configuration.inactiveWindowPaneAlpha : configuration.inactiveWindowFocusedPaneAlpha
 		for container in containers.values {
-			container.activeAlpha = key ? 1 : configuration.inactiveWindowFocusedPaneAlpha
+			container.activeAlpha = key ? 1 : focusedInactive
 			container.inactiveAlpha =
 				key ? configuration.inactivePaneAlpha : configuration.inactiveWindowPaneAlpha
 		}

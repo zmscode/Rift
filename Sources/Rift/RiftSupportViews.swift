@@ -15,6 +15,8 @@ final class RiftPaneContainerView: RiftFlippedView {
 	private(set) var contentView: NSView
 
 	var headerHeight: CGFloat = 24 { didSet { layoutParts() } }
+	/// Space kept above the content when there is no header bar.
+	var headerlessTopInset: CGFloat = 0 { didSet { layoutParts() } }
 	var showsHeader = true {
 		didSet {
 			header.isHidden = !showsHeader
@@ -80,7 +82,8 @@ final class RiftPaneContainerView: RiftFlippedView {
 	}
 
 	private func layoutParts() {
-		let h = showsHeader ? min(headerHeight, bounds.height) : 0
+		let h =
+			showsHeader ? min(headerHeight, bounds.height) : min(headerlessTopInset, bounds.height)
 		header.frame = CGRect(x: 0, y: 0, width: bounds.width, height: h)
 		contentClip.frame = CGRect(
 			x: 0, y: h, width: bounds.width, height: max(0, bounds.height - h))
@@ -453,6 +456,52 @@ final class RiftFocusBorderView: RiftFlippedView {
 		(color ?? .controlAccentColor).setStroke()
 		path.stroke()
 	}
+}
+
+/// Draws divider lines as layers, so they can use a blend mode.
+final class RiftDividerLinesView: NSView {
+	private var lineLayers: [CALayer] = []
+
+	override init(frame: NSRect) {
+		super.init(frame: frame)
+		wantsLayer = true
+	}
+
+	@available(*, unavailable)
+	required init?(coder: NSCoder) { fatalError() }
+
+	override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+	/// `rects` are in this view's coordinates.
+	func show(_ rects: [CGRect], color: NSColor, blendMode: RiftDividerBlendMode) {
+		guard let layer else { return }
+		CATransaction.begin()
+		CATransaction.setDisableActions(true)
+		while lineLayers.count < rects.count {
+			let line = CALayer()
+			layer.addSublayer(line)
+			lineLayers.append(line)
+		}
+		while lineLayers.count > rects.count { lineLayers.removeLast().removeFromSuperlayer() }
+		var cgColor: CGColor?
+		effectiveAppearance.performAsCurrentDrawingAppearance { cgColor = color.cgColor }
+		for (line, rect) in zip(lineLayers, rects) {
+			line.frame = rect
+			line.backgroundColor = cgColor
+			line.compositingFilter = blendMode.compositingFilter
+		}
+		CATransaction.commit()
+	}
+
+	override func viewDidChangeEffectiveAppearance() {
+		super.viewDidChangeEffectiveAppearance()
+		(superview as? RiftDividerLinesHost)?.refreshDividerLines()
+	}
+}
+
+@MainActor
+protocol RiftDividerLinesHost: AnyObject {
+	func refreshDividerLines()
 }
 
 /// Shows where a dragged pane will land: a translucent accent fill with a solid 2pt outline.

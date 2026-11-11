@@ -59,6 +59,8 @@ public struct RiftConfiguration {
 	// Dividers
 	public var showsDividerLines = true
 	public var dividerColor: NSColor = .separatorColor
+	/// How divider lines blend with what is behind them.
+	public var dividerBlendMode: RiftDividerBlendMode = .normal
 	public var allowsDividerDragging = true
 	/// Keyboard and accessibility resize step, as a fraction of the split being resized.
 	public var keyboardResizeFraction: Double = 0.05
@@ -75,6 +77,9 @@ public struct RiftConfiguration {
 	/// Height of the header bar, or of the invisible strip when headers are off. In a headless
 	/// window this is also the row the window buttons are centred in.
 	public var headerHeight: CGFloat = 28
+	/// Space kept above pane content when headers are off (like a terminal's top padding).
+	/// The invisible top strip still sits over it. 0 lets content reach the top edge.
+	public var headerlessTopInset: CGFloat = 0
 	/// Width of the top-left corner of a pane that drags it (when headers are off).
 	public var dragHandleWidth: CGFloat = 44
 	public var showsCloseButtons = true
@@ -184,5 +189,22 @@ extension RiftConfiguration {
 		configuration.paneCornerRadius = 0
 		configuration.dropIndicatorCornerRadius = 0
 		return configuration
+	}
+}
+
+/// Blend modes for divider lines (Core Animation compositing filters).
+public enum RiftDividerBlendMode: String, Sendable, Hashable, CaseIterable {
+	case normal, plusDarker, plusLighter, colorDodge, overlay, color
+
+	/// The `CALayer.compositingFilter` name, or `nil` for normal blending.
+	public var compositingFilter: String? {
+		switch self {
+		case .normal: nil
+		case .plusDarker: "plusD"
+		case .plusLighter: "plusL"
+		case .colorDodge: "colorDodgeBlendMode"
+		case .overlay: "overlayBlendMode"
+		case .color: "colorBlendMode"
+		}
 	}
 }

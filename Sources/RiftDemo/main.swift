@@ -5,7 +5,7 @@ import Rift
 
 /// A coloured pane with a text field (to show focus and first responder) and a scroll view with
 /// always-visible scrollers (to show that scrollers hide while panes are being reshaped).
-final class DemoPaneView: NSView {
+final class DemoPaneView: NSView, RiftPanePresentationObserving {
 	private let hue: CGFloat
 	private let status = NSTextField(labelWithString: "")
 	private var resizeObserver: RiftContainerAnimationObserver?
@@ -59,6 +59,12 @@ final class DemoPaneView: NSView {
 		layer?.backgroundColor =
 			NSColor(calibratedHue: hue, saturation: 0.35, brightness: 0.85, alpha: translucent ? 0.35 : 1)
 			.cgColor
+	}
+
+	/// Shows when the layout is still moving (a terminal would hold back its size report).
+	func riftPanePresentationDidChange(_ presentation: RiftPanePresentation) {
+		guard status.stringValue.isEmpty || status.stringValue == "Settling…" else { return }
+		status.stringValue = presentation.isLayoutSettled ? "" : "Settling…"
 	}
 
 	override func viewDidMoveToWindow() {
@@ -450,6 +456,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 			}
 		}
 
+		bar.section("Divider lines", "Blend mode for the lines in compact density.")
+		bar.segmented(["Normal", "Darker", "Lighter", "Overlay"], selected: 0) { index in
+			configure {
+				$0.dividerBlendMode = [.normal, .plusDarker, .plusLighter, .overlay][index]
+			}
+		}
+
 		bar.section("Panes")
 		bar.toggle("Fade unfocused panes", isOn: rift.configuration.inactivePaneAlpha < 1) { on in
 			configure {
@@ -488,6 +501,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 		}
 		bar.toggle("Pane headers", isOn: rift.configuration.showsPaneHeaders) { on in
 			configure { $0.showsPaneHeaders = on }
+		}
+		bar.toggle("Top padding without headers", isOn: false) { on in
+			configure { $0.headerlessTopInset = on ? 28 : 0 }
 		}
 		bar.buttons([("Hide controls (⌃⌘S)", { [weak content] in content?.toggleSidebar() })])
 
