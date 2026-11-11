@@ -196,13 +196,16 @@ public struct RiftTabItemLayout: Equatable, Sendable {
 	/// The 1 × 18 line at the tab's leading edge.
 	public var dividerFrame: CGRect
 	public var closeButtonFrame: CGRect
+	/// The 16pt icon before the title, when the tab has one.
+	public var iconFrame: CGRect?
 	public var titleFrame: CGRect
 
-	/// Lays out a tab of `size`. The close button is 22pt, centred, near the trailing edge; the
-	/// title runs from 12pt to 4pt before it (or to 12pt from the end when it is hidden).
-	public static func resolve(size: CGSize, density: RiftChromeDensity, showsCloseButton: Bool)
-		-> RiftTabItemLayout
-	{
+	/// Lays out a tab of `size`. The close button is 22pt, centred, its glyph 5pt (4pt compact)
+	/// from the trailing edge; the title runs from 12pt (3pt after an icon) to 4pt before the close
+	/// button, or to 12pt from the end while the button is hidden.
+	public static func resolve(
+		size: CGSize, density: RiftChromeDensity, showsCloseButton: Bool, hasIcon: Bool = false
+	) -> RiftTabItemLayout {
 		let bounds = CGRect(origin: .zero, size: size)
 		let radius = min(RiftTabBarMath.tabCornerRadius, min(size.width, size.height) / 2)
 		let compactShift: CGFloat = density == .compact ? 1 : 0
@@ -210,13 +213,18 @@ public struct RiftTabItemLayout: Equatable, Sendable {
 		let closeX = size.width - (12 - compactShift) - close + 7 + compactShift
 		let closeFrame = CGRect(
 			x: closeX, y: ((size.height - close) / 2).rounded(), width: close, height: close)
-		let titleMinX: CGFloat = 12
+		let icon = hasIcon
+			? CGRect(
+				x: density == .compact ? 8 : 10, y: ((size.height - 16) / 2).rounded(), width: 16,
+				height: 16)
+			: nil
+		let titleMinX: CGFloat = icon.map { $0.maxX + 3 } ?? 12
 		let titleMaxX = showsCloseButton ? closeFrame.minX - 4 : size.width - 12
 		let titleHeight: CGFloat = 16
 		return RiftTabItemLayout(
 			hoverFrame: bounds, cornerRadius: radius,
 			dividerFrame: CGRect(x: -1, y: ((size.height - 18) / 2).rounded(), width: 1, height: 18),
-			closeButtonFrame: closeFrame,
+			closeButtonFrame: closeFrame, iconFrame: icon,
 			titleFrame: CGRect(
 				x: titleMinX, y: ((size.height - titleHeight) / 2).rounded(),
 				width: max(0, titleMaxX - titleMinX), height: titleHeight))

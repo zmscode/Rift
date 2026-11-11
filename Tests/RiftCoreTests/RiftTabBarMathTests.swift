@@ -106,5 +106,10 @@ import Testing
 			size: CGSize(width: 200, height: 28), density: .compact, showsCloseButton: false)
 		#expect(compact.closeButtonFrame.minX == 175)
 		#expect(compact.titleFrame.maxX == 188)
+		let withIcon = RiftTabItemLayout.resolve(
+			size: CGSize(width: 200, height: 30), density: .comfortable, showsCloseButton: false,
+			hasIcon: true)
+		#expect(withIcon.iconFrame == CGRect(x: 10, y: 7, width: 16, height: 16))
+		#expect(withIcon.titleFrame.minX == 29)
 	}
 }

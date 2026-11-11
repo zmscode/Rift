@@ -676,6 +676,10 @@ public final class RiftChromeIconButton: NSButton {
 	public var symbolName = "sidebar.left" {
 		didSet { if symbolName != oldValue { updateImage() } }
 	}
+	/// The symbol's point size.
+	public var symbolPointSize: CGFloat = 13 {
+		didSet { if symbolPointSize != oldValue { updateImage() } }
+	}
 	/// The symbol's opacity while the pointer is elsewhere.
 	public var restingForegroundOpacity: CGFloat = 0.7 { didSet { updateAppearance() } }
 	/// Draw the symbol at full opacity even when not hovered.
@@ -747,7 +751,7 @@ public final class RiftChromeIconButton: NSButton {
 	}
 
 	private func updateImage() {
-		let configuration = NSImage.SymbolConfiguration(pointSize: 13, weight: .regular)
+		let configuration = NSImage.SymbolConfiguration(pointSize: symbolPointSize, weight: .regular)
 		image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?
 			.withSymbolConfiguration(configuration)
 		updateAppearance()

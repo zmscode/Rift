@@ -9,10 +9,16 @@ public struct RiftTab<ID: Hashable>: Equatable {
 	public var isClosable: Bool
 	/// What the tab is busy doing ("is still working"); closing a busy tab asks first.
 	public var activity: String?
+	/// An SF Symbol shown before the title.
+	public var symbolName: String?
 
-	public init(id: ID, title: String, isClosable: Bool = true, activity: String? = nil) {
+	public init(
+		id: ID, title: String, symbolName: String? = nil, isClosable: Bool = true,
+		activity: String? = nil
+	) {
 		self.id = id
 		self.title = title
+		self.symbolName = symbolName
 		self.isClosable = isClosable
 		self.activity = activity
 	}
@@ -28,12 +34,15 @@ public struct RiftTabSurfaces: Hashable, Sendable {
 		public var selection: RiftSurfaceStyle
 		public var inactiveWindowSelection: RiftSurfaceStyle
 		public var hover: RiftSurfaceStyle
+		/// How far the track is drawn inside its frame.
+		public var trackInset: CGFloat
 
 		public init(
 			track: RiftSurfaceStyle, inactiveWindowTrack: RiftSurfaceStyle,
 			selection: RiftSurfaceStyle, inactiveWindowSelection: RiftSurfaceStyle,
-			hover: RiftSurfaceStyle
+			hover: RiftSurfaceStyle, trackInset: CGFloat = 0
 		) {
+			self.trackInset = trackInset
 			self.track = track
 			self.inactiveWindowTrack = inactiveWindowTrack
 			self.selection = selection
@@ -52,12 +61,14 @@ public struct RiftTabSurfaces: Hashable, Sendable {
 
 	/// The built-in look.
 	///
-	/// - Track: a 40pt-radius capsule, white at 5% (dark; 3% in background windows), plus-darker
-	///   black at 5% (light).
-	/// - Selected tab: glass at 16.5pt corners. Light adds a canvas tint at 25% and a soft shadow;
-	///   dark adds a faint white outline in background windows.
-	/// - Hovered tab: white at 13% (10% compact) with a 5% overlay (dark), plus-darker black at
-	///   5% (light).
+	/// - Track: a 40pt-radius capsule, white at 5% (dark; 3% in background windows, 2% compact, and
+	///   inset 1pt in compact), black at 5% (light; plus-darker in comfortable; none in background
+	///   windows).
+	/// - Selected tab: plain glass at 16.5pt corners. Dark background windows add a 1pt white
+	///   outline at 5%. Light adds a 25% tint (the canvas; white in compact) and, in the key window,
+	///   a soft shadow (black at 40%, opacity 0.15, 3.5pt blur, 1.5pt down).
+	/// - Hovered tab: white at 13% (10% compact) with a 5% white overlay on top (dark),
+	///   plus-darker black at 5% (light).
 	public static func modern(_ density: RiftChromeDensity) -> RiftTabSurfaces {
 		func rgb(_ v: CGFloat, _ a: CGFloat) -> NSColor {
 			NSColor(srgbRed: v, green: v, blue: v, alpha: a)
@@ -72,22 +83,23 @@ public struct RiftTabSurfaces: Hashable, Sendable {
 		darkInactiveTrack.fill = RiftSurfaceFill(color: rgb(1, compact ? 0.02 : 0.03))
 		var darkSelection = RiftSurfaceStyle()
 		darkSelection.cornerRadius = RiftTabBarMath.tabCornerRadius
-		darkSelection.glass = RiftSurfaceGlass(tint: rgb(canvas, 0.3))
-		darkSelection.fill = RiftSurfaceFill(color: rgb(1, 0.06))
+		darkSelection.glass = RiftSurfaceGlass()
 		var darkInactiveSelection = darkSelection
 		darkInactiveSelection.strokes = [RiftSurfaceStroke(color: rgb(1, 0.05))]
 		var darkHover = RiftSurfaceStyle()
 		darkHover.cornerRadius = RiftTabBarMath.tabCornerRadius
-		darkHover.backdrop = RiftSurfaceFill(color: rgb(1, compact ? 0.1 : 0.13), blendMode: .overlay)
-		darkHover.fill = RiftSurfaceFill(color: rgb(1, 0.05))
+		darkHover.backdrop = RiftSurfaceFill(color: rgb(1, compact ? 0.1 : 0.13))
+		darkHover.fill = RiftSurfaceFill(color: rgb(1, 0.05), blendMode: .overlay)
 
 		var lightTrack = RiftSurfaceStyle()
 		lightTrack.cornerRadius = RiftTabBarMath.trackCornerRadius
 		lightTrack.fill = RiftSurfaceFill(color: rgb(0, 0.05), blendMode: compact ? .normal : .plusDarker)
-		var lightSelection = RiftSurfaceStyle()
-		lightSelection.cornerRadius = RiftTabBarMath.tabCornerRadius
-		lightSelection.glass = RiftSurfaceGlass(tint: compact ? rgb(1, 0.25) : rgb(canvas, 0.25))
-		lightSelection.fill = RiftSurfaceFill(color: rgb(1, 0.6))
+		var lightInactiveTrack = RiftSurfaceStyle()
+		lightInactiveTrack.cornerRadius = RiftTabBarMath.trackCornerRadius
+		var lightInactiveSelection = RiftSurfaceStyle()
+		lightInactiveSelection.cornerRadius = RiftTabBarMath.tabCornerRadius
+		lightInactiveSelection.glass = RiftSurfaceGlass(tint: compact ? rgb(1, 0.25) : rgb(canvas, 0.25))
+		var lightSelection = lightInactiveSelection
 		lightSelection.shadows = [
 			RiftSurfaceShadow(
 				color: rgb(0, 0.4), opacity: 0.15, radius: 3.5, offset: CGSize(width: 0, height: 1.5))
@@ -98,11 +110,12 @@ public struct RiftTabSurfaces: Hashable, Sendable {
 
 		return RiftTabSurfaces(
 			light: Looks(
-				track: lightTrack, inactiveWindowTrack: lightTrack, selection: lightSelection,
-				inactiveWindowSelection: lightSelection, hover: lightHover),
+				track: lightTrack, inactiveWindowTrack: lightInactiveTrack, selection: lightSelection,
+				inactiveWindowSelection: lightInactiveSelection, hover: lightHover),
 			dark: Looks(
 				track: darkTrack, inactiveWindowTrack: darkInactiveTrack, selection: darkSelection,
-				inactiveWindowSelection: darkInactiveSelection, hover: darkHover))
+				inactiveWindowSelection: darkInactiveSelection, hover: darkHover,
+				trackInset: compact ? 1 : 0))
 	}
 
 	/// These looks with their canvas-grey tints taken from the theme's canvas colour.
@@ -113,7 +126,7 @@ public struct RiftTabSurfaces: Hashable, Sendable {
 				inactiveWindowTrack: l.inactiveWindowTrack.rift_themed(theme),
 				selection: l.selection.rift_themed(theme),
 				inactiveWindowSelection: l.inactiveWindowSelection.rift_themed(theme),
-				hover: l.hover.rift_themed(theme))
+				hover: l.hover.rift_themed(theme), trackInset: l.trackInset)
 		}
 		return RiftTabSurfaces(
 			light: looks(light, selection.light), dark: looks(dark, selection.dark))
@@ -220,6 +233,7 @@ public final class RiftTabBarView<ID: Hashable>: NSView, RiftPaneDropAccepting {
 	private var hoveredTab: ID? { didSet { if hoveredTab != oldValue { updateChrome() } } }
 	private var trackingArea: NSTrackingArea?
 	private let confirmation = RiftCloseConfirmation()
+	private var trackInset: CGFloat = 0
 	/// Room a sidebar asks for (its window buttons and toggle), on top of the insets.
 	private var chromeRoom: (leading: CGFloat, trailing: CGFloat) = (0, 0)
 
@@ -318,7 +332,7 @@ public final class RiftTabBarView<ID: Hashable>: NSView, RiftPaneDropAccepting {
 		let animated = animatesNextLayout
 		animatesNextLayout = false
 		let track = layout.trackFrame
-		place(trackSurface, track.insetBy(dx: -2, dy: -2), animated: animated)
+		place(trackSurface, track.insetBy(dx: trackInset - 2, dy: trackInset - 2), animated: animated)
 		place(clipView, track.insetBy(dx: -2, dy: -4), animated: false)
 		let toClip = CGPoint(x: -(track.minX - 2), y: -(track.minY - 4))
 
@@ -392,6 +406,7 @@ public final class RiftTabBarView<ID: Hashable>: NSView, RiftPaneDropAccepting {
 		for tab in tabs {
 			let view = itemViews[tab.id] ?? makeItemView(tab.id)
 			view.title = tab.title
+			view.symbolName = tab.symbolName
 			view.isClosable = tab.isClosable
 		}
 		if let draggedTab, !ids.contains(draggedTab) { endTabDrag(cancelled: true) }
@@ -406,8 +421,9 @@ public final class RiftTabBarView<ID: Hashable>: NSView, RiftPaneDropAccepting {
 		view.bar = self
 		clipView.addSubview(view, positioned: .above, relativeTo: selectionSurface)
 		itemViews[id] = view
+		let looks = (theme.map { surfaces.themed($0) } ?? surfaces).looks(isDark: isDark)
 		view.applyLooks(
-			hover: surfaces.looks(isDark: isDark).hover, density: density, textColor: textColor)
+			hover: looks.hover, density: density, textColor: textColor, windowActive: isWindowActive)
 		return view
 	}
 
@@ -433,8 +449,11 @@ public final class RiftTabBarView<ID: Hashable>: NSView, RiftPaneDropAccepting {
 		placeholder.style = placeholderStyle
 		newTabButton.foregroundColor = textColor
 		for view in itemViews.values {
-			view.applyLooks(hover: looks.hover, density: density, textColor: textColor)
+			view.applyLooks(
+				hover: looks.hover, density: density, textColor: textColor,
+				windowActive: isWindowActive)
 		}
+		trackInset = looks.trackInset
 		needsLayout = true
 	}
 
@@ -479,6 +498,12 @@ public final class RiftTabBarView<ID: Hashable>: NSView, RiftPaneDropAccepting {
 			heldTabWidth = nil
 			layoutAnimated()
 		}
+	}
+
+	private func refreshHoverFromPointer() {
+		guard let window, draggedTab == nil else { return }
+		let point = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+		hoveredTab = bounds.contains(point) ? tab(at: point) : nil
 	}
 
 	private func updateHover(_ event: NSEvent) {
@@ -534,6 +559,11 @@ public final class RiftTabBarView<ID: Hashable>: NSView, RiftPaneDropAccepting {
 			// Keep tab widths until the pointer leaves, so the next close button lands under it.
 			if let resolved = self.resolved, self.tabs.count > 1 { self.heldTabWidth = resolved.tabWidth }
 			self.onClose?(id)
+			// The tab that slides under the pointer is hovered (and shows its close button)
+			// without the pointer moving.
+			DispatchQueue.main.asyncAfter(deadline: .now() + RiftTabBarMath.geometryDuration) {
+				[weak self] in self?.refreshHoverFromPointer()
+			}
 		}
 		guard let activity = tab.activity else { return close() }
 		presentConfirmation(.tab, busy: [(tab, activity)], spotlight: id, confirm: close)
@@ -761,7 +791,18 @@ final class RiftTabItemView<ID: Hashable>: NSView, NSTextFieldDelegate {
 			setAccessibilityLabel(title)
 		}
 	}
+	var symbolName: String? {
+		didSet {
+			guard symbolName != oldValue else { return }
+			icon.image = symbolName.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) }?
+				.withSymbolConfiguration(.init(pointSize: 12, weight: .regular))
+			icon.isHidden = icon.image == nil
+			needsLayout = true
+		}
+	}
 	var isClosable = true { didSet { updateVisibility() } }
+	/// Keeps the close button showing (the tab slid under the pointer after a close).
+	var keepsCloseButtonShown = false { didSet { if keepsCloseButtonShown != oldValue { updateVisibility() } } }
 	var isHovered = false { didSet { if isHovered != oldValue { updateVisibility(animated: true) } } }
 	var isSelected = false {
 		didSet {
@@ -784,6 +825,7 @@ final class RiftTabItemView<ID: Hashable>: NSView, NSTextFieldDelegate {
 	private let hoverSurface = RiftSurfaceStackView()
 	private let divider = CALayer()
 	private let label = NSTextField(labelWithString: "")
+	private let icon = NSImageView()
 	private let fadeMask = CAGradientLayer()
 	private let closeButton = RiftChromeIconButton()
 	private var editor: NSTextField?
@@ -804,14 +846,19 @@ final class RiftTabItemView<ID: Hashable>: NSView, NSTextFieldDelegate {
 		divider.opacity = 1
 		layer?.addSublayer(divider)
 		label.lineBreakMode = .byClipping
-		label.font = .systemFont(ofSize: 12, weight: .medium)
+		// Every tab's title: 13pt regular in the bar's foreground colour.
+		label.font = .systemFont(ofSize: 13, weight: .regular)
 		label.wantsLayer = true
 		fadeMask.startPoint = CGPoint(x: 0, y: 0.5)
 		fadeMask.endPoint = CGPoint(x: 1, y: 0.5)
 		fadeMask.colors = [NSColor.black.cgColor, NSColor.black.cgColor, NSColor.clear.cgColor]
 		label.layer?.mask = fadeMask
 		addSubview(label)
+		icon.isHidden = true
+		icon.imageScaling = .scaleProportionallyDown
+		addSubview(icon)
 		closeButton.symbolName = "xmark"
+		closeButton.symbolPointSize = 10
 		closeButton.restingForegroundOpacity = 0.7
 		closeButton.target = self
 		closeButton.action = #selector(closeClicked)
@@ -829,13 +876,18 @@ final class RiftTabItemView<ID: Hashable>: NSView, NSTextFieldDelegate {
 	override var mouseDownCanMoveWindow: Bool { false }
 	override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
-	func applyLooks(hover: RiftSurfaceStyle, density: RiftChromeDensity, textColor: NSColor) {
+	func applyLooks(
+		hover: RiftSurfaceStyle, density: RiftChromeDensity, textColor: NSColor, windowActive: Bool
+	) {
 		self.density = density
 		hoverSurface.style = hover
 		label.textColor = textColor
+		icon.contentTintColor = textColor
 		closeButton.foregroundColor = textColor
+		// The separator colour at 18% (13.5% in background windows).
 		effectiveAppearance.performAsCurrentDrawingAppearance {
-			divider.backgroundColor = textColor.withAlphaComponent(0.12).cgColor
+			divider.backgroundColor =
+				NSColor.separatorColor.withAlphaComponent(windowActive ? 0.18 : 0.135).cgColor
 		}
 		needsLayout = true
 	}
@@ -843,7 +895,8 @@ final class RiftTabItemView<ID: Hashable>: NSView, NSTextFieldDelegate {
 	override func layout() {
 		super.layout()
 		let item = RiftTabItemLayout.resolve(
-			size: bounds.size, density: density, showsCloseButton: showsCloseButton)
+			size: bounds.size, density: density, showsCloseButton: showsCloseButton,
+			hasIcon: !icon.isHidden)
 		CATransaction.begin()
 		CATransaction.setDisableActions(true)
 		hoverSurface.frame = item.hoverFrame
@@ -852,6 +905,7 @@ final class RiftTabItemView<ID: Hashable>: NSView, NSTextFieldDelegate {
 		hoverSurface.style = style
 		divider.frame = item.dividerFrame
 		closeButton.frame = item.closeButtonFrame
+		if let frame = item.iconFrame { icon.frame = frame }
 		label.frame = item.titleFrame
 		editor?.frame = item.titleFrame.insetBy(dx: -3, dy: -2)
 		fadeMask.frame = label.bounds
@@ -862,7 +916,8 @@ final class RiftTabItemView<ID: Hashable>: NSView, NSTextFieldDelegate {
 		CATransaction.commit()
 	}
 
-	private var showsCloseButton: Bool { isClosable && (isHovered || isSelected) }
+	/// Only while hovered (or kept showing by the bar).
+	private var showsCloseButton: Bool { isClosable && (isHovered || keepsCloseButtonShown) }
 
 	private func updateVisibility(animated: Bool = false) {
 		closeButton.isHidden = !showsCloseButton

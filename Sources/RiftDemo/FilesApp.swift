@@ -239,7 +239,10 @@ struct FilesWindow: View {
 			tabs: Binding(
 				get: {
 					tabs.map { tab in
-						RiftTab(id: tab.id, title: tab.title, activity: busyActivity(in: tab))
+						RiftTab(
+							id: tab.id, title: tab.title,
+							symbolName: tab.browser == nil ? "square.split.2x1" : "folder",
+							activity: busyActivity(in: tab))
 					}
 				},
 				set: { new in
