@@ -104,7 +104,8 @@ public struct RiftTabSurfaces: Hashable, Sendable {
 		var lightSelection = lightInactiveSelection
 		lightSelection.shadows = [
 			RiftSurfaceShadow(
-				color: rgb(0, 0.4), opacity: 0.15, radius: 3.5, offset: CGSize(width: 0, height: 1.5),
+				color: rgb(0, 0.4), opacity: 0.15, radius: 3.5,
+				offset: CGSize(width: 0, height: 1.5),
 				role: .content)
 		]
 		var lightHover = RiftSurfaceStyle()
@@ -114,7 +115,8 @@ public struct RiftTabSurfaces: Hashable, Sendable {
 
 		return RiftTabSurfaces(
 			light: Looks(
-				track: lightTrack, inactiveWindowTrack: lightInactiveTrack, selection: lightSelection,
+				track: lightTrack, inactiveWindowTrack: lightInactiveTrack,
+				selection: lightSelection,
 				inactiveWindowSelection: lightInactiveSelection, hover: lightHover),
 			dark: Looks(
 				track: darkTrack, inactiveWindowTrack: darkInactiveTrack, selection: darkSelection,
@@ -169,7 +171,9 @@ protocol RiftPaneDropAccepting: NSView {
 public final class RiftTabBarView<ID: Hashable>: NSView, RiftPaneDropAccepting {
 	// MARK: Content
 
-	public var tabs: [RiftTab<ID>] = [] { didSet { if tabs != oldValue { tabsChanged(from: oldValue) } } }
+	public var tabs: [RiftTab<ID>] = [] {
+		didSet { if tabs != oldValue { tabsChanged(from: oldValue) } }
+	}
 	public var selectedTab: ID? {
 		didSet {
 			if selectedTab != oldValue {
@@ -184,7 +188,12 @@ public final class RiftTabBarView<ID: Hashable>: NSView, RiftPaneDropAccepting {
 	// MARK: Options
 
 	public var density: RiftChromeDensity = .comfortable {
-		didSet { if density != oldValue { restyle(); invalidateIntrinsicContentSize() } }
+		didSet {
+			if density != oldValue {
+				restyle()
+				invalidateIntrinsicContentSize()
+			}
+		}
 	}
 	/// Tabs share all the width instead of stopping at 240pt.
 	public var fillsAvailableSpace = false {
@@ -194,8 +203,12 @@ public final class RiftTabBarView<ID: Hashable>: NSView, RiftPaneDropAccepting {
 		didSet { if showsNewTabButton != oldValue { needsLayout = true } }
 	}
 	/// Room at the leading edge (for the window buttons).
-	public var leadingInset: CGFloat = 0 { didSet { if leadingInset != oldValue { needsLayout = true } } }
-	public var trailingInset: CGFloat = 0 { didSet { if trailingInset != oldValue { needsLayout = true } } }
+	public var leadingInset: CGFloat = 0 {
+		didSet { if leadingInset != oldValue { needsLayout = true } }
+	}
+	public var trailingInset: CGFloat = 0 {
+		didSet { if trailingInset != oldValue { needsLayout = true } }
+	}
 	public var surfaces: RiftTabSurfaces = .modern(.comfortable) {
 		didSet { if surfaces != oldValue { restyle() } }
 	}
@@ -285,7 +298,9 @@ public final class RiftTabBarView<ID: Hashable>: NSView, RiftPaneDropAccepting {
 	public override var mouseDownCanMoveWindow: Bool { false }
 
 	public override var intrinsicContentSize: NSSize {
-		NSSize(width: NSView.noIntrinsicMetric, height: RiftTabBarMath.buttonSize(density: density) + 4)
+		NSSize(
+			width: NSView.noIntrinsicMetric, height: RiftTabBarMath.buttonSize(density: density) + 4
+		)
 	}
 
 	public override func viewDidMoveToWindow() {
@@ -294,7 +309,8 @@ public final class RiftTabBarView<ID: Hashable>: NSView, RiftPaneDropAccepting {
 		center.removeObserver(self)
 		if let window {
 			for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
-				center.addObserver(self, selector: #selector(windowKeyChanged), name: name, object: window)
+				center.addObserver(
+					self, selector: #selector(windowKeyChanged), name: name, object: window)
 			}
 		}
 		restyle()
@@ -326,7 +342,8 @@ public final class RiftTabBarView<ID: Hashable>: NSView, RiftPaneDropAccepting {
 			let frame = layout.tabFrames[index]
 			let base = layout.trackFrame.minX - layout.scrollOffset
 			let offset = RiftTabBarMath.revealingOffset(
-				current: layout.scrollOffset, tabMinX: frame.minX - base, tabMaxX: frame.maxX - base,
+				current: layout.scrollOffset, tabMinX: frame.minX - base,
+				tabMaxX: frame.maxX - base,
 				trackWidth: layout.trackFrame.width, maximum: layout.maximumScrollOffset)
 			if offset != layout.scrollOffset {
 				scrollOffset = offset
@@ -416,7 +433,8 @@ public final class RiftTabBarView<ID: Hashable>: NSView, RiftPaneDropAccepting {
 		} else {
 			// Vertically it follows a quarter of the dragged tab's travel.
 			let base = resolved.tabFrames.first.map { $0.insetBy(dx: -2, dy: -2) } ?? hull
-			hull.origin.y = base.minY + (min(hull.minY - base.minY, 0) + max(hull.maxY - base.maxY, 0)) / 4
+			hull.origin.y =
+				base.minY + (min(hull.minY - base.minY, 0) + max(hull.maxY - base.maxY, 0)) / 4
 			hull.size.height = base.height
 		}
 		hull = hull.insetBy(dx: trackInset, dy: trackInset)
@@ -438,7 +456,8 @@ public final class RiftTabBarView<ID: Hashable>: NSView, RiftPaneDropAccepting {
 	private func place(
 		_ view: NSView, _ frame: CGRect, animated: Bool, timing: RiftTabTiming? = nil
 	) {
-		RiftTabAnimator.setFrame(view, frame, timing: animated ? (timing ?? animation.geometry) : nil)
+		RiftTabAnimator.setFrame(
+			view, frame, timing: animated ? (timing ?? animation.geometry) : nil)
 	}
 
 	private func layoutAnimated() {
@@ -475,11 +494,14 @@ public final class RiftTabBarView<ID: Hashable>: NSView, RiftPaneDropAccepting {
 		itemViews[id] = view
 		let looks = (theme.map { surfaces.themed($0) } ?? surfaces).looks(isDark: isDark)
 		view.applyLooks(
-			hover: looks.hover, density: density, textColor: textColor, windowActive: isWindowActive)
+			hover: looks.hover, density: density, textColor: textColor, windowActive: isWindowActive
+		)
 		return view
 	}
 
-	private var isDark: Bool { effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua }
+	private var isDark: Bool {
+		effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+	}
 	private var isWindowActive: Bool { window?.isKeyWindow ?? true }
 
 	private var textColor: NSColor {
@@ -520,7 +542,8 @@ public final class RiftTabBarView<ID: Hashable>: NSView, RiftPaneDropAccepting {
 		for (index, id) in order.enumerated() {
 			guard let view = itemViews[id] else { continue }
 			view.showsDivider =
-				paneDropIndex == nil && RiftTabBarMath.showsDivider(atTab: index, highlighted: highlighted)
+				paneDropIndex == nil
+				&& RiftTabBarMath.showsDivider(atTab: index, highlighted: highlighted)
 			view.isHovered = id == hoveredTab && draggedTab == nil
 			view.isSelected = id == selectedTab
 			view.layer?.zPosition =
@@ -535,7 +558,8 @@ public final class RiftTabBarView<ID: Hashable>: NSView, RiftPaneDropAccepting {
 		super.updateTrackingAreas()
 		if let trackingArea { removeTrackingArea(trackingArea) }
 		let area = NSTrackingArea(
-			rect: bounds, options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect],
+			rect: bounds,
+			options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect],
 			owner: self)
 		addTrackingArea(area)
 		trackingArea = area
@@ -570,7 +594,9 @@ public final class RiftTabBarView<ID: Hashable>: NSView, RiftPaneDropAccepting {
 	}
 
 	public override func scrollWheel(with event: NSEvent) {
-		guard let resolved, resolved.maximumScrollOffset > 0 else { return super.scrollWheel(with: event) }
+		guard let resolved, resolved.maximumScrollOffset > 0 else {
+			return super.scrollWheel(with: event)
+		}
 		let delta =
 			abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY)
 			? event.scrollingDeltaX : event.scrollingDeltaY
@@ -609,7 +635,9 @@ public final class RiftTabBarView<ID: Hashable>: NSView, RiftPaneDropAccepting {
 		let close = { [weak self] in
 			guard let self else { return }
 			// Keep tab widths until the pointer leaves, so the next close button lands under it.
-			if let resolved = self.resolved, self.tabs.count > 1 { self.heldTabWidth = resolved.tabWidth }
+			if let resolved = self.resolved, self.tabs.count > 1 {
+				self.heldTabWidth = resolved.tabWidth
+			}
 			self.onClose?(id)
 			// The tab that slides under the pointer is hovered (and shows its close button)
 			// without the pointer moving.
@@ -636,7 +664,8 @@ public final class RiftTabBarView<ID: Hashable>: NSView, RiftPaneDropAccepting {
 	) {
 		let host = window?.contentView ?? self
 		let rows = busy.enumerated().map { index, entry in
-			RiftCloseConfirmation.Row(id: index, text: "\(entry.0.title) \(entry.1)") { [weak self] in
+			RiftCloseConfirmation.Row(id: index, text: "\(entry.0.title) \(entry.1)") {
+				[weak self] in
 				self?.onSelect?(entry.0.id)
 			}
 		}
@@ -649,7 +678,9 @@ public final class RiftTabBarView<ID: Hashable>: NSView, RiftPaneDropAccepting {
 		let menu = NSMenu()
 		let order = tabs.map(\.id)
 		let index = order.firstIndex(of: id) ?? 0
-		menu.addItem(RiftClosureMenuItem(title: "Rename Tab…") { [weak self] in self?.itemRequestsRename(id) })
+		menu.addItem(
+			RiftClosureMenuItem(title: "Rename Tab…") { [weak self] in self?.itemRequestsRename(id)
+			})
 		menu.addItem(.separator())
 		let back = RiftClosureMenuItem(title: "Move Tab Backward") { [weak self] in
 			self?.onMove?(id, index - 1)
@@ -700,7 +731,8 @@ public final class RiftTabBarView<ID: Hashable>: NSView, RiftPaneDropAccepting {
 			pointer: clipView.convert(pointer, from: nil), startPointer: dragStartPointer,
 			startOrigin: dragStartOrigin, size: view.frame.size,
 			track: CGRect(
-				x: track.minX - scrollOffset, y: track.minY, width: max(track.width, contentWidth(resolved)),
+				x: track.minX - scrollOffset, y: track.minY,
+				width: max(track.width, contentWidth(resolved)),
 				height: track.height))
 		view.setFrameOrigin(origin)
 		if selectedTab == id { selectionSurface.frame = view.frame }
@@ -763,7 +795,8 @@ public final class RiftTabBarView<ID: Hashable>: NSView, RiftPaneDropAccepting {
 		let mids = resolved.tabFrames.map { $0.midX - base }
 		let index: Int
 		if let current = paneDropIndex {
-			index = RiftTabBarMath.reorderedIndex(draggedMidX: inClip.x, current: current, slotMidXs: mids)
+			index = RiftTabBarMath.reorderedIndex(
+				draggedMidX: inClip.x, current: current, slotMidXs: mids)
 		} else {
 			index = tabs.filter { itemViews[$0.id].map { $0.frame.midX < inClip.x } ?? false }.count
 		}
@@ -848,10 +881,36 @@ final class RiftTabClipView: NSView {
 
 // MARK: - Tab item
 
+/// What a tab item asks of the view it sits in (a bar or a sidebar list).
+@MainActor
+protocol RiftTabItemHost<TabID>: NSView {
+	associatedtype TabID: Hashable
+	var animation: RiftTabAnimation { get }
+	func itemClicked(_ id: TabID)
+	func itemClose(_ id: TabID)
+	func itemRenamed(_ id: TabID, to title: String)
+	func menu(for id: TabID) -> NSMenu
+	func beginTabDrag(_ id: TabID, pointer: CGPoint)
+	func moveTabDrag(_ id: TabID, pointer: CGPoint)
+	func endTabDrag(_ id: TabID?, screenPoint: CGPoint?, cancelled: Bool)
+}
+
+extension RiftTabBarView: RiftTabItemHost {}
+
 @MainActor
 final class RiftTabItemView<ID: Hashable>: NSView, NSTextFieldDelegate {
 	let id: ID
-	weak var bar: RiftTabBarView<ID>?
+	weak var bar: (any RiftTabItemHost<ID>)?
+	/// Laid out as a sidebar row (no divider; sizes follow `scale`).
+	var isVertical = false { didSet { if isVertical != oldValue { needsLayout = true } } }
+	/// The sidebar text size over 13 (vertical rows): the title, close button and corners scale.
+	var scale: CGFloat = 1 {
+		didSet {
+			guard scale != oldValue else { return }
+			label.font = .systemFont(ofSize: 13 * scale, weight: .regular)
+			needsLayout = true
+		}
+	}
 
 	var title = "" {
 		didSet {
@@ -864,16 +923,22 @@ final class RiftTabItemView<ID: Hashable>: NSView, NSTextFieldDelegate {
 	var symbolName: String? {
 		didSet {
 			guard symbolName != oldValue else { return }
-			icon.image = symbolName.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) }?
-				.withSymbolConfiguration(.init(pointSize: 12, weight: .regular))
+			icon.image = symbolName.flatMap {
+				NSImage(systemSymbolName: $0, accessibilityDescription: nil)
+			}?
+			.withSymbolConfiguration(.init(pointSize: 12, weight: .regular))
 			icon.isHidden = icon.image == nil
 			needsLayout = true
 		}
 	}
 	var isClosable = true { didSet { updateVisibility() } }
 	/// Keeps the close button showing (the tab slid under the pointer after a close).
-	var keepsCloseButtonShown = false { didSet { if keepsCloseButtonShown != oldValue { updateVisibility() } } }
-	var isHovered = false { didSet { if isHovered != oldValue { updateVisibility(animated: true) } } }
+	var keepsCloseButtonShown = false {
+		didSet { if keepsCloseButtonShown != oldValue { updateVisibility() } }
+	}
+	var isHovered = false {
+		didSet { if isHovered != oldValue { updateVisibility(animated: true) } }
+	}
 	var isSelected = false {
 		didSet {
 			if isSelected != oldValue {
@@ -947,6 +1012,18 @@ final class RiftTabItemView<ID: Hashable>: NSView, NSTextFieldDelegate {
 
 	override var isFlipped: Bool { true }
 	override var mouseDownCanMoveWindow: Bool { false }
+
+	/// The whole tab takes clicks (its title and icon never swallow them); only the close button
+	/// and the rename field answer for themselves.
+	override func hitTest(_ point: NSPoint) -> NSView? {
+		guard let hit = super.hitTest(point) else { return nil }
+		if let editor, hit === editor || hit.isDescendant(of: editor) { return hit }
+		if !closeButton.isHidden, hit === closeButton || hit.isDescendant(of: closeButton) {
+			return hit
+		}
+		return self
+	}
+
 	override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
 		if let event, !(window?.isKeyWindow ?? false) { firstMouseTimestamp = event.timestamp }
 		return true
@@ -973,7 +1050,8 @@ final class RiftTabItemView<ID: Hashable>: NSView, NSTextFieldDelegate {
 		super.layout()
 		let item = RiftTabItemLayout.resolve(
 			size: bounds.size, density: density, showsCloseButton: showsCloseButton,
-			hasIcon: !icon.isHidden)
+			hasIcon: !icon.isHidden, vertical: isVertical, scale: scale)
+		divider.isHidden = isVertical
 		CATransaction.begin()
 		CATransaction.setDisableActions(true)
 		hoverSurface.frame = item.hoverFrame
@@ -1043,13 +1121,15 @@ final class RiftTabItemView<ID: Hashable>: NSView, NSTextFieldDelegate {
 		pulseLayer.fillColor = NSColor.clear.cgColor
 		CATransaction.commit()
 		let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-		let tint = (dark ? NSColor.white.withAlphaComponent(0.07) : NSColor.black.withAlphaComponent(0.05))
+		let tint =
+			(dark ? NSColor.white.withAlphaComponent(0.07) : NSColor.black.withAlphaComponent(0.05))
 			.cgColor
 		let clear = NSColor.clear.cgColor
 		let flash = CAKeyframeAnimation(keyPath: "fillColor")
 		flash.values = [clear, tint, clear, tint, clear]
 		flash.keyTimes = [0, 0.25, 0.5, 0.75, 1]
-		flash.timingFunctions = Array(repeating: CAMediaTimingFunction(name: .easeInEaseOut), count: 4)
+		flash.timingFunctions = Array(
+			repeating: CAMediaTimingFunction(name: .easeInEaseOut), count: 4)
 		flash.duration = duration
 		pulseLayer.add(flash, forKey: "rift.springLoad")
 		// The hover surface is normally hidden on this tab; show it for the flash.
@@ -1085,7 +1165,8 @@ final class RiftTabItemView<ID: Hashable>: NSView, NSTextFieldDelegate {
 		guard let pressPoint, let bar else { return }
 		let point = event.locationInWindow
 		if !isDragging {
-			guard hypot(point.x - pressPoint.x, point.y - pressPoint.y) > RiftTabBarMath.dragThreshold
+			guard
+				hypot(point.x - pressPoint.x, point.y - pressPoint.y) > RiftTabBarMath.dragThreshold
 			else { return }
 			isDragging = true
 			armsRename = false
@@ -1099,7 +1180,7 @@ final class RiftTabItemView<ID: Hashable>: NSView, NSTextFieldDelegate {
 		if isDragging {
 			isDragging = false
 			let screen = window?.convertPoint(toScreen: event.locationInWindow)
-			bar?.endTabDrag(id, screenPoint: screen)
+			bar?.endTabDrag(id, screenPoint: screen, cancelled: false)
 			return
 		}
 		if armsRename, event.clickCount == 1 {
@@ -1139,7 +1220,8 @@ final class RiftTabItemView<ID: Hashable>: NSView, NSTextFieldDelegate {
 		if !cancelled { bar?.itemRenamed(id, to: field.stringValue) }
 	}
 
-	func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+	func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool
+	{
 		if selector == #selector(cancelOperation(_:)) {
 			editor?.stringValue = title
 			window?.makeFirstResponder(bar)

@@ -23,7 +23,8 @@ enum RiftTabAnimator {
 	/// Sets `view.frame`, animating from where it is drawn now.
 	static func setFrame(_ view: NSView, _ frame: CGRect, timing: RiftTabTiming?) {
 		guard view.frame != frame else { return }
-		guard let timing, let layer = view.layer, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+		guard let timing, let layer = view.layer,
+			!NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
 		else {
 			view.layer?.removeAnimation(forKey: "rift.tab.position")
 			view.layer?.removeAnimation(forKey: "rift.tab.bounds")
@@ -37,9 +38,11 @@ enum RiftTabAnimator {
 		CATransaction.setDisableActions(true)
 		view.frame = frame
 		CATransaction.commit()
-		add(to: layer, keyPath: "position", from: NSValue(point: fromPosition),
+		add(
+			to: layer, keyPath: "position", from: NSValue(point: fromPosition),
 			to: NSValue(point: layer.position), timing: timing)
-		add(to: layer, keyPath: "bounds", from: NSValue(rect: fromBounds),
+		add(
+			to: layer, keyPath: "bounds", from: NSValue(rect: fromBounds),
 			to: NSValue(rect: layer.bounds), timing: timing)
 	}
 
@@ -66,7 +69,9 @@ enum RiftTabAnimator {
 		CATransaction.setDisableActions(true)
 		layer.opacity = opacity
 		CATransaction.commit()
-		if let timing { add(to: layer, keyPath: "opacity", from: from, to: opacity, timing: timing) }
+		if let timing {
+			add(to: layer, keyPath: "opacity", from: from, to: opacity, timing: timing)
+		}
 	}
 
 	static func add(to layer: CALayer, keyPath: String, from: Any, to: Any, timing: RiftTabTiming) {

@@ -62,7 +62,9 @@ public struct RiftSurfaceFill: Hashable, Sendable {
 	/// colour's alpha; without a theme (or a role) `color` is drawn as it is.
 	public var role: RiftColorRole?
 
-	public init(color: NSColor, blendMode: RiftDividerBlendMode = .normal, role: RiftColorRole? = nil) {
+	public init(
+		color: NSColor, blendMode: RiftDividerBlendMode = .normal, role: RiftColorRole? = nil
+	) {
 		self.color = color
 		self.blendMode = blendMode
 		self.role = role
@@ -383,7 +385,8 @@ public struct RiftWindowSurface: Hashable, Sendable {
 		var inactiveDark = dark
 		if density == .comfortable { inactiveDark.tint = rgb(1, 0.5) }
 		// Compact light takes the system's canvas, not the theme's.
-		let light = density == .compact
+		let light =
+			density == .compact
 			? Look(tint: rgb(1, 0.7)) : Look(tint: rgb(canvas, 0.7), tintRole: .canvas)
 		return RiftWindowSurface(
 			cornerRadius: 12, light: light, dark: dark, inactiveWindowDark: inactiveDark,

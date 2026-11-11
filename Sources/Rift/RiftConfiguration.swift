@@ -337,7 +337,8 @@ public struct RiftTitlebarMetrics: Equatable, Sendable {
 	/// compact) left of the base inset.
 	public static func tabBar(_ density: RiftChromeDensity) -> Self {
 		let compact = density == .compact
-		return Self(height: compact ? 40 : 46, buttonOffset: CGPoint(x: baseX - (compact ? 4 : 1), y: 0))
+		return Self(
+			height: compact ? 40 : 46, buttonOffset: CGPoint(x: baseX - (compact ? 4 : 1), y: 0))
 	}
 }
 

@@ -87,9 +87,11 @@ public final class RiftHeadlessWindow {
 		if Self.supportsTitlebarSettings(window) {
 			usesTitlebarSettings = true
 			let center = NotificationCenter.default
-			for name in [NSWindow.didExitFullScreenNotification, NSWindow.didBecomeKeyNotification] {
+			for name in [NSWindow.didExitFullScreenNotification, NSWindow.didBecomeKeyNotification]
+			{
 				observers.append(
-					center.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+					center.addObserver(forName: name, object: window, queue: .main) {
+						[weak self] _ in
 						MainActor.assumeIsolated { self?.layoutButtons() }
 					})
 			}
@@ -165,7 +167,8 @@ public final class RiftHeadlessWindow {
 			// (its y is stored negated, so a positive value would move the buttons up).
 			let height =
 				titlebarHeight
-				?? max(rowHeight, (window.standardWindowButton(.closeButton)?.frame.height ?? 16) + 2)
+				?? max(
+					rowHeight, (window.standardWindowButton(.closeButton)?.frame.height ?? 16) + 2)
 			let fullScreen = window.styleMask.contains(.fullScreen)
 			Self.applyTitlebarSettings(
 				to: window, height: fullScreen ? -1 : height,

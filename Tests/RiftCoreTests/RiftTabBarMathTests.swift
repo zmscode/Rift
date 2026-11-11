@@ -141,3 +141,29 @@ import Testing
 		#expect(RiftTabBarMath.trailingSpacing(density: .compact) == 6)
 	}
 }
+
+@Suite struct TabListMathTests {
+	@Test func rowsAre30PointsScaledByTheTextSize() {
+		#expect(RiftTabListMath.titlePointSize(.small) == 11)
+		#expect(RiftTabListMath.titlePointSize(.large) == 15)
+		#expect(RiftTabListMath.rowHeight(.medium) == 30)
+		#expect(RiftTabListMath.rowHeight(.small) == 25)  // 30 × 11/13 = 25.4
+		#expect(RiftTabListMath.rowHeight(.large) == 34)  // 30 × 15/13 = 34.6
+	}
+
+	@Test func rowsStackInsideTheSideInset() {
+		let rows = RiftTabListMath.rowFrames(count: 3, width: 240, top: 0, height: 30, inset: 10)
+		#expect(rows.map(\.minY) == [0, 30, 60])
+		#expect(rows.allSatisfy { $0.minX == 10 && $0.width == 220 })
+		#expect(RiftTabListMath.sideInset(density: .compact) == 6)
+	}
+
+	@Test func sidebarRowsScaleTheCloseButtonAndCorners() {
+		let row = RiftTabItemLayout.resolve(
+			size: CGSize(width: 220, height: 34), density: .compact, showsCloseButton: true,
+			vertical: true, scale: 15.0 / 13)
+		#expect(row.closeButtonFrame.width == 25)  // 22 × 15/13 = 25.4
+		#expect(row.cornerRadius == 17)  // min(19, 34/2)
+		#expect(row.closeButtonFrame.maxX == CGFloat(220 - 12 + 7))  // no compact shift in the sidebar
+	}
+}

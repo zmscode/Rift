@@ -309,7 +309,8 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 	}
 
 	private func applyFocusBorderStyle() {
-		let base = (configuration.focusBorderColor
+		let base =
+			(configuration.focusBorderColor
 			?? themedPalette.color(configuration.focusBorderPreset))
 			.withAlphaComponent(configuration.focusBorderOpacity)
 		let active = window?.isKeyWindow ?? true
@@ -343,9 +344,10 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 		dropIndicator.cornerRadius = configuration.dropIndicatorCornerRadius
 		dropOverlay.indicator.color = dropColor
 		dropOverlay.indicator.cornerRadius = configuration.dropIndicatorCornerRadius
-		windowSurfaceView.surface = configuration.theme.flatMap { theme in
-			configuration.windowSurface?.themed(theme)
-		} ?? configuration.windowSurface
+		windowSurfaceView.surface =
+			configuration.theme.flatMap { theme in
+				configuration.windowSurface?.themed(theme)
+			} ?? configuration.windowSurface
 		applyFocusBorderStyle()
 		applyWindowFade()
 		updateTrackingArea()
@@ -681,7 +683,9 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 		guard let id = pane ?? focusedStorage, let layout = paneLayout,
 			layout.removing(.pane(id)) != nil
 		else { return false }
-		if confirmClose(.pane, panes: [id], spotlight: id, perform: { [weak self] in self?.closeNow(id) }) {
+		if confirmClose(
+			.pane, panes: [id], spotlight: id, perform: { [weak self] in self?.closeNow(id) })
+		{
 			return true
 		}
 		return closeNow(id)
@@ -708,7 +712,9 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 
 	@discardableResult
 	private func closeNow(_ id: PaneID) -> Bool {
-		guard let layout = paneLayout, let removal = layout.removing(.pane(id)) else { return false }
+		guard let layout = paneLayout, let removal = layout.removing(.pane(id)) else {
+			return false
+		}
 		let wasFocused = focusedStorage == id
 		if let container = containers.removeValue(forKey: id) {
 			animateOut(container, edge: layout.growthEdge(of: id))
@@ -836,7 +842,9 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 
 	@discardableResult
 	private func closeOthersNow(_ keep: PaneID) -> Bool {
-		guard let layout = paneLayout, layout.contains(keep), layout.paneCount > 1 else { return false }
+		guard let layout = paneLayout, layout.contains(keep), layout.paneCount > 1 else {
+			return false
+		}
 		let closed = layout.paneIDs.filter { $0 != keep }
 		for id in closed {
 			if let container = containers.removeValue(forKey: id) {

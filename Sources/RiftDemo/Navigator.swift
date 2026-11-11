@@ -10,6 +10,8 @@ struct Navigator: View {
 	@Binding var settings: FilesSettings
 	let activity: RiftStructuralActivity
 	let actions: FilesActions
+	/// The tabs as sidebar rows, when they live here.
+	let tabList: AnyView?
 	@State private var openOptions: Set<String> = ["Look"]
 
 	var body: some View {
@@ -17,6 +19,7 @@ struct Navigator: View {
 			Color.clear.frame(height: titleRowHeight)
 			ScrollView {
 				VStack(alignment: .leading, spacing: 14) {
+					if let tabList { tabs(tabList) }
 					places("Favourites", Files.favourites)
 					places("Locations", Files.locations)
 					panes
@@ -35,6 +38,20 @@ struct Navigator: View {
 	}
 
 	// MARK: Sections
+
+	/// The tab rows run edge to edge (they keep their own inset), under a heading with a new-tab
+	/// button.
+	private func tabs(_ list: AnyView) -> some View {
+		VStack(alignment: .leading, spacing: 6) {
+			HStack {
+				Text("TABS").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+				Spacer()
+				Button(action: actions.newTab) { Image(systemName: "plus") }
+					.buttonStyle(.plain).foregroundStyle(.secondary).help("New Tab (⌘T)")
+			}
+			list.padding(.horizontal, -10)
+		}
+	}
 
 	private var currentFolder: URL? { tab?.browser.map { Files.shared.folder(of: $0) } }
 
@@ -156,6 +173,14 @@ struct Navigator: View {
 					Button("Balance", action: actions.balance)
 					Button(tab?.zoomed == nil ? "Zoom" : "Unzoom", action: actions.zoom)
 					Button("Close others") { actions.closeOthers(nil) }
+				}
+			}
+			option("Tabs") {
+				segmented($settings.tabPlacement, FilesSettings.TabPlacement.allCases) { $0.rawValue }
+				labelled("Sidebar text") {
+					segmented($settings.sidebarTextSize, RiftSidebarTextSize.allCases) {
+						$0.rawValue.capitalized
+					}
 				}
 			}
 			option("Sidebar") {

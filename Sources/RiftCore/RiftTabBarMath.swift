@@ -206,13 +206,18 @@ public struct RiftTabItemLayout: Equatable, Sendable {
 	/// Lays out a tab of `size`. The close button is 22pt, centred, its glyph 5pt (4pt compact)
 	/// from the trailing edge; the title runs from 12pt (3pt after an icon) to 4pt before the close
 	/// button, or to 12pt from the end while the button is hidden.
+	///
+	/// `scale` (sidebar rows: the text size over 13) scales the close button and the corner radius,
+	/// each rounded down to whole points; a sidebar row also takes no compact shift.
 	public static func resolve(
-		size: CGSize, density: RiftChromeDensity, showsCloseButton: Bool, hasIcon: Bool = false
+		size: CGSize, density: RiftChromeDensity, showsCloseButton: Bool, hasIcon: Bool = false,
+		vertical: Bool = false, scale: CGFloat = 1
 	) -> RiftTabItemLayout {
 		let bounds = CGRect(origin: .zero, size: size)
-		let radius = min(RiftTabBarMath.tabCornerRadius, min(size.width, size.height) / 2)
-		let compactShift: CGFloat = density == .compact ? 1 : 0
-		let close: CGFloat = 22
+		let cap = scale == 1 ? RiftTabBarMath.tabCornerRadius : (RiftTabBarMath.tabCornerRadius * scale).rounded(.down)
+		let radius = min(cap, min(size.width, size.height) / 2)
+		let compactShift: CGFloat = density == .compact && !vertical ? 1 : 0
+		let close: CGFloat = scale == 1 ? 22 : (22 * scale).rounded(.down)
 		let closeX = size.width - (12 - compactShift) - close + 7 + compactShift
 		let closeFrame = CGRect(
 			x: closeX, y: ((size.height - close) / 2).rounded(), width: close, height: close)
@@ -313,4 +318,43 @@ extension RiftTabBarMath {
 	public static func placeholderCornerRadius(_ size: CGSize) -> CGFloat {
 		min(min(size.width, size.height) / 2, tabCornerRadius)
 	}
+}
+
+/// The numbers behind a sidebar tab list.
+public enum RiftTabListMath {
+	/// The sidebar title size for each text size: 11, 13 and 15pt.
+	public static func titlePointSize(_ size: RiftSidebarTextSize) -> CGFloat {
+		switch size {
+		case .small: 11
+		case .medium: 13
+		case .large: 15
+		}
+	}
+
+	/// How much sidebar sizes scale: the title size over 13.
+	public static func scale(_ size: RiftSidebarTextSize) -> CGFloat { titlePointSize(size) / 13 }
+
+	/// A row's height: 30pt scaled by the text size, rounded down.
+	public static func rowHeight(_ size: RiftSidebarTextSize) -> CGFloat {
+		size == .medium ? 30 : (30 * scale(size)).rounded(.down)
+	}
+
+	/// Rows' side inset (the sidebar title row's margin): 10pt, 6 compact.
+	public static func sideInset(density: RiftChromeDensity) -> CGFloat {
+		density == .compact ? 6 : 10
+	}
+
+	/// Row frames stacked from `top`, each `height` tall, inset `inset` from the sides.
+	public static func rowFrames(count: Int, width: CGFloat, top: CGFloat, height: CGFloat, inset: CGFloat)
+		-> [CGRect]
+	{
+		(0..<max(count, 0)).map {
+			CGRect(x: inset, y: top + CGFloat($0) * height, width: max(0, width - 2 * inset), height: height)
+		}
+	}
+}
+
+/// The sidebar's text size.
+public enum RiftSidebarTextSize: String, Sendable, Hashable, CaseIterable {
+	case small, medium, large
 }

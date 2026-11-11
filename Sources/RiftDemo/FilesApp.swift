@@ -30,6 +30,10 @@ struct FilesSettings: Equatable {
 		RiftTheme.builtIn.first { $0.id == themeID }.map { RiftThemeSelection($0) } ?? .standard
 	}
 	var asksBeforeClosingBusyPanes = true
+	/// Where the tabs go: rows in the sidebar, or a bar across the top.
+	enum TabPlacement: String, CaseIterable { case sidebar = "Sidebar", top = "Top" }
+	var tabPlacement = TabPlacement.sidebar
+	var sidebarTextSize = RiftSidebarTextSize.medium
 
 	var density: RiftChromeDensity { look == .compact ? .compact : .comfortable }
 
@@ -205,10 +209,11 @@ struct FilesWindow: View {
 			Navigator(
 				tab: current?.wrappedValue,
 				focused: current.map { $0.focused } ?? .constant(nil),
-				settings: $settings, activity: activity, actions: actions)
+				settings: $settings, activity: activity, actions: actions,
+				tabList: settings.tabPlacement == .sidebar ? AnyView(tabList) : nil)
 		} content: {
 			VStack(spacing: 0) {
-				tabBar
+				if settings.tabPlacement == .top { tabBar }
 				ZStack {
 					ForEach($tabs) { $tab in
 						layoutView($tab).layoutHidden(tab.id != selection)
@@ -234,53 +239,68 @@ struct FilesWindow: View {
 		.onAppear { Files.shared.record("window opened") }
 	}
 
+	/// The tabs as the bar and the sidebar list show them; moves and renames come back here,
+	/// closes go through `closeTab`.
+	private var tabItems: Binding<[RiftTab<Int>]> {
+		Binding(
+			get: {
+				tabs.map { tab in
+					RiftTab(
+						id: tab.id, title: tab.title,
+						symbolName: tab.browser == nil ? "square.split.2x1" : "folder",
+						activity: busyActivity(in: tab))
+				}
+			},
+			set: { new in
+				var reordered: [FilesTab] = []
+				for item in new {
+					guard var tab = tabs.first(where: { $0.id == item.id }) else { continue }
+					if item.title != tab.title {
+						tab.customTitle = item.title
+						Files.shared.record("renamed a tab to \(item.title)")
+					}
+					reordered.append(tab)
+				}
+				if reordered.map(\.id) != tabs.map(\.id) { Files.shared.record("moved a tab") }
+				tabs = reordered
+			})
+	}
+
+	private func tearOff(_ id: Int) {
+		guard let tab = tabs.first(where: { $0.id == id }), let layout = tab.layout,
+			let value = WindowSeed.value(for: layout)
+		else { return }
+		Files.shared.record("tore off \(tab.title)")
+		closeTab(id)
+		openWindow(value: value)
+	}
+
+	private func paneBecomesTab(_ pane: AnyHashable, at index: Int) -> Bool {
+		guard let pane = pane.base as? String else { return false }
+		let tab = FilesTab(layout: .pane(pane))
+		tabs.insert(tab, at: min(index, tabs.count))
+		selection = tab.id
+		Files.shared.record("\(PaneIDs.title(of: pane)) became a tab")
+		return true
+	}
+
 	private var tabBar: some View {
 		RiftTabBar(
-			tabs: Binding(
-				get: {
-					tabs.map { tab in
-						RiftTab(
-							id: tab.id, title: tab.title,
-							symbolName: tab.browser == nil ? "square.split.2x1" : "folder",
-							activity: busyActivity(in: tab))
-					}
-				},
-				set: { new in
-					// Moves and renames come back here; closes go through `onClose`.
-					var reordered: [FilesTab] = []
-					for item in new {
-						guard var tab = tabs.first(where: { $0.id == item.id }) else { continue }
-						if item.title != tab.title {
-							tab.customTitle = item.title
-							Files.shared.record("renamed a tab to \(item.title)")
-						}
-						reordered.append(tab)
-					}
-					if reordered.map(\.id) != tabs.map(\.id) { Files.shared.record("moved a tab") }
-					tabs = reordered
-				}),
-			selection: $selection, density: settings.density, theme: settings.theme,
-			onClose: { closeTab($0) },
-			onTearOff: { id, _ in
-				guard let tab = tabs.first(where: { $0.id == id }), let layout = tab.layout,
-					let value = WindowSeed.value(for: layout)
-				else { return }
-				Files.shared.record("tore off \(tab.title)")
-				closeTab(id)
-				openWindow(value: value)
-			},
-			onPaneDrop: { pane, index in
-				guard let pane = pane.base as? String else { return false }
-				let tab = FilesTab(layout: .pane(pane))
-				tabs.insert(tab, at: min(index, tabs.count))
-				selection = tab.id
-				Files.shared.record("\(PaneIDs.title(of: pane)) became a tab")
-				return true
-			},
-			onNewTab: { newTab() }
+			tabs: tabItems, selection: $selection, density: settings.density, theme: settings.theme,
+			onClose: { closeTab($0) }, onTearOff: { id, _ in tearOff(id) },
+			onPaneDrop: { paneBecomesTab($0, at: $1) }, onNewTab: { newTab() }
 		)
 		.frame(height: RiftTabBarMath.buttonSize(density: settings.density) + 12)
 		.padding(.horizontal, 6)
+	}
+
+	/// The tabs as sidebar rows.
+	private var tabList: some View {
+		RiftTabList(
+			tabs: tabItems, selection: $selection, density: settings.density,
+			textSize: settings.sidebarTextSize, theme: settings.theme,
+			onClose: { closeTab($0) }, onTearOff: { id, _ in tearOff(id) },
+			onPaneDrop: { paneBecomesTab($0, at: $1) })
 	}
 
 	private func layoutView(_ tab: Binding<FilesTab>) -> RiftLayoutView<String, FilesPane> {

@@ -401,7 +401,9 @@ public struct RiftSidebarSplitView<Sidebar: View, Content: View>: NSViewRepresen
 	var sidebarRoot: AnyView {
 		AnyView(
 			sidebar
-				.environment(\.riftSidebarTitleRowHeight, RiftSidebarMath.titleRowHeight(density: density))
+				.environment(
+					\.riftSidebarTitleRowHeight, RiftSidebarMath.titleRowHeight(density: density)
+				)
 				.environment(\.riftThemeSelection, theme)
 				.ignoresSafeArea())
 	}
@@ -501,8 +503,10 @@ public struct RiftTabBar<ID: Hashable>: NSViewRepresentable {
 			var tabs = parent.tabs
 			guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
 			if parent.selection == id {
-				parent.selection = RiftTabBarMath.selectionAfterClosing(index: index, count: tabs.count)
-					.map { tabs[$0 < index ? $0 : $0 + 1].id }
+				parent.selection = RiftTabBarMath.selectionAfterClosing(
+					index: index, count: tabs.count
+				)
+				.map { tabs[$0 < index ? $0 : $0 + 1].id }
 			}
 			tabs.remove(at: index)
 			parent.tabs = tabs
@@ -530,7 +534,9 @@ public struct RiftTabBar<ID: Hashable>: NSViewRepresentable {
 			coordinator.parent.tabs = tabs
 		}
 		view.onRename = { id, title in
-			guard let index = coordinator.parent.tabs.firstIndex(where: { $0.id == id }) else { return }
+			guard let index = coordinator.parent.tabs.firstIndex(where: { $0.id == id }) else {
+				return
+			}
 			coordinator.parent.tabs[index].title = title
 		}
 		updateNSView(view, context: context)
@@ -550,7 +556,8 @@ public struct RiftTabBar<ID: Hashable>: NSViewRepresentable {
 		view.showsNewTabButton = onNewTab != nil
 		view.onNewTab = onNewTab.map { _ in { coordinator.parent.onNewTab?() } }
 		view.onTearOff = onTearOff.map { _ in { coordinator.parent.onTearOff?($0, $1) } }
-		view.onPaneDrop = onPaneDrop.map { _ in { coordinator.parent.onPaneDrop?($0, $1) ?? false } }
+		view.onPaneDrop = onPaneDrop.map { _ in { coordinator.parent.onPaneDrop?($0, $1) ?? false }
+		}
 		view.tabs = tabs
 		view.selectedTab = selection
 	}
@@ -561,5 +568,103 @@ public struct RiftTabBar<ID: Hashable>: NSViewRepresentable {
 		CGSize(
 			width: proposal.width ?? 400,
 			height: RiftTabBarMath.buttonSize(density: density) + 4)
+	}
+}
+
+/// Tabs as sidebar rows, for SwiftUI (see `RiftTabListView`). It is as tall as its rows. Moves,
+/// renames and closes are written back to `tabs` (closing the selected tab selects the next one).
+public struct RiftTabList<ID: Hashable>: NSViewRepresentable {
+	@Binding private var tabs: [RiftTab<ID>]
+	@Binding private var selection: ID?
+	@Environment(\.riftThemeSelection) private var environmentTheme
+	private let density: RiftChromeDensity
+	private let textSize: RiftSidebarTextSize
+	private let theme: RiftThemeSelection?
+	private let dragGroup: String
+	private let onClose: ((ID) -> Void)?
+	private let onTearOff: ((ID, CGPoint) -> Void)?
+	private let onPaneDrop: ((AnyHashable, Int) -> Bool)?
+
+	public init(
+		tabs: Binding<[RiftTab<ID>]>, selection: Binding<ID?>,
+		density: RiftChromeDensity = .comfortable, textSize: RiftSidebarTextSize = .medium,
+		theme: RiftThemeSelection? = nil, dragGroup: String = "rift.default",
+		onClose: ((ID) -> Void)? = nil, onTearOff: ((ID, CGPoint) -> Void)? = nil,
+		onPaneDrop: ((AnyHashable, Int) -> Bool)? = nil
+	) {
+		_tabs = tabs
+		_selection = selection
+		self.density = density
+		self.textSize = textSize
+		self.theme = theme
+		self.dragGroup = dragGroup
+		self.onClose = onClose
+		self.onTearOff = onTearOff
+		self.onPaneDrop = onPaneDrop
+	}
+
+	public final class Coordinator {
+		var parent: RiftTabList
+		init(_ parent: RiftTabList) { self.parent = parent }
+
+		@MainActor func close(_ id: ID) {
+			if let onClose = parent.onClose { return onClose(id) }
+			var tabs = parent.tabs
+			guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
+			if parent.selection == id {
+				parent.selection = RiftTabBarMath.selectionAfterClosing(
+					index: index, count: tabs.count
+				)
+				.map { tabs[$0 < index ? $0 : $0 + 1].id }
+			}
+			tabs.remove(at: index)
+			parent.tabs = tabs
+		}
+	}
+
+	public func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+	public func makeNSView(context: Context) -> RiftTabListView<ID> {
+		let coordinator = context.coordinator
+		let view = RiftTabListView<ID>()
+		view.setContentHuggingPriority(.required, for: .vertical)
+		view.onSelect = { coordinator.parent.selection = $0 }
+		view.onClose = { coordinator.close($0) }
+		view.onCloseOthers = { id in
+			for tab in coordinator.parent.tabs where tab.id != id && tab.isClosable {
+				coordinator.close(tab.id)
+			}
+			coordinator.parent.selection = id
+		}
+		view.onMove = { id, index in
+			var tabs = coordinator.parent.tabs
+			guard let from = tabs.firstIndex(where: { $0.id == id }), tabs.indices.contains(index)
+			else { return }
+			tabs.insert(tabs.remove(at: from), at: index)
+			coordinator.parent.tabs = tabs
+		}
+		view.onRename = { id, title in
+			guard let index = coordinator.parent.tabs.firstIndex(where: { $0.id == id }) else {
+				return
+			}
+			coordinator.parent.tabs[index].title = title
+		}
+		updateNSView(view, context: context)
+		return view
+	}
+
+	public func updateNSView(_ view: RiftTabListView<ID>, context: Context) {
+		let coordinator = context.coordinator
+		coordinator.parent = self
+		view.density = density
+		view.surfaces = .modern(density)
+		view.textSize = textSize
+		view.theme = theme ?? environmentTheme
+		view.paneDropGroup = dragGroup
+		view.onTearOff = onTearOff.map { _ in { coordinator.parent.onTearOff?($0, $1) } }
+		view.onPaneDrop = onPaneDrop.map { _ in { coordinator.parent.onPaneDrop?($0, $1) ?? false }
+		}
+		view.tabs = tabs
+		view.selectedTab = selection
 	}
 }

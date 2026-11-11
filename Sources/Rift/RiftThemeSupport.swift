@@ -49,7 +49,8 @@ extension NSColor {
 	/// This colour with the canvas grey replaced by `canvas` (same alpha), or itself otherwise.
 	func rift_replacingCanvas(with canvas: RiftRGBA) -> NSColor {
 		guard let srgb = usingColorSpace(.sRGB) else { return self }
-		let grey = abs(srgb.redComponent - riftCanvasGrey) < 0.002
+		let grey =
+			abs(srgb.redComponent - riftCanvasGrey) < 0.002
 			&& abs(srgb.greenComponent - riftCanvasGrey) < 0.002
 			&& abs(srgb.blueComponent - riftCanvasGrey) < 0.002
 		return grey ? NSColor(rift: canvas.withAlpha(Double(srgb.alphaComponent))) : self
@@ -67,7 +68,9 @@ extension RiftSurfaceStyle {
 			return NSColor(rift: theme[role].withAlpha(alpha * theme[role].alpha))
 		}
 		var style = self
-		func themed(_ fill: RiftSurfaceFill) -> RiftSurfaceFill { Self.rift_themedFill(fill, theme) }
+		func themed(_ fill: RiftSurfaceFill) -> RiftSurfaceFill {
+			Self.rift_themedFill(fill, theme)
+		}
 		if let glass = style.glass, let tint = glass.tint {
 			style.glass?.tint = resolve(tint, glass.tintRole)
 		}

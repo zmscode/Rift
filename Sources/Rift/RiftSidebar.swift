@@ -81,7 +81,8 @@ open class RiftSidebarContainerView: NSView {
 	public var dividerColor: NSColor = NSColor(name: nil) { appearance in
 		appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
 			? NSColor(white: 1, alpha: 0.1) : NSColor(white: 0, alpha: 0.1)
-	} { didSet { relayout() } }
+	}
+	{ didSet { relayout() } }
 
 	/// The user picked a side or a density from the toggle button's menu (right-click it).
 	public var onPositionChange: ((RiftSidebarPosition) -> Void)?
@@ -104,7 +105,8 @@ open class RiftSidebarContainerView: NSView {
 		}
 	}
 	/// The smallest the window should be: 720pt open, less once a fold has shrunk it.
-	public private(set) var windowMinimumWidth: CGFloat = RiftSidebarMath.expandedWindowMinimumWidth {
+	public private(set) var windowMinimumWidth: CGFloat = RiftSidebarMath.expandedWindowMinimumWidth
+	{
 		didSet {
 			guard windowMinimumWidth != oldValue else { return }
 			onWindowMinimumWidthChange?(windowMinimumWidth)
@@ -156,7 +158,9 @@ open class RiftSidebarContainerView: NSView {
 		}
 		addSubview(resizeHandle)
 		toggleButton.menuProvider = { [weak self] in
-			guard let self, self.onPositionChange != nil || self.onDensityChange != nil else { return nil }
+			guard let self, self.onPositionChange != nil || self.onDensityChange != nil else {
+				return nil
+			}
 			return self.makeToggleMenu()
 		}
 		toggleButton.target = self
@@ -397,7 +401,8 @@ open class RiftSidebarContainerView: NSView {
 		let menu = NSMenu()
 		for accessory in hidden {
 			let item = RiftClosureMenuItem(title: accessory.label, handler: accessory.action)
-			item.image = NSImage(systemSymbolName: accessory.symbolName, accessibilityDescription: nil)
+			item.image = NSImage(
+				systemSymbolName: accessory.symbolName, accessibilityDescription: nil)
 			menu.addItem(item)
 		}
 		menu.popUp(positioning: nil, at: CGPoint(x: 0, y: sender.bounds.maxY + 4), in: sender)
@@ -412,7 +417,8 @@ open class RiftSidebarContainerView: NSView {
 		let clearance: CGFloat =
 			hidesToggleButton
 			? (position == .left ? (isFullScreen ? 8 : 76) : 0)
-			: (position == .left ? toggle.maxX - sidebarMinX + 2 : sidebarMinX + w - toggle.minX + 2)
+			: (position == .left
+				? toggle.maxX - sidebarMinX + 2 : sidebarMinX + w - toggle.minX + 2)
 		let row = RiftSidebarMath.titleRowButtons(
 			count: accessories.count, sidebarWidth: w, position: position, density: density,
 			clearance: clearance)
@@ -451,7 +457,8 @@ open class RiftSidebarContainerView: NSView {
 			self?.onPositionChange?(.right)
 		}
 		menu.addItem(.separator())
-		add("Comfortable", symbol: "rectangle.grid.2x2", on: density == .comfortable) { [weak self] in
+		add("Comfortable", symbol: "rectangle.grid.2x2", on: density == .comfortable) {
+			[weak self] in
 			self?.onDensityChange?(.comfortable)
 		}
 		add("Compact", symbol: "rectangle.split.2x2", on: density == .compact) { [weak self] in
@@ -698,7 +705,9 @@ public final class RiftChromeIconButton: NSButton {
 
 	private let hoverLayer = CALayer()
 	private var trackingArea: NSTrackingArea?
-	private var isHovered = false { didSet { if isHovered != oldValue { updateAppearance(animated: true) } } }
+	private var isHovered = false {
+		didSet { if isHovered != oldValue { updateAppearance(animated: true) } }
+	}
 
 	public override init(frame: NSRect) {
 		super.init(frame: frame)
@@ -735,7 +744,8 @@ public final class RiftChromeIconButton: NSButton {
 		super.updateTrackingAreas()
 		if let trackingArea { removeTrackingArea(trackingArea) }
 		let area = NSTrackingArea(
-			rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self)
+			rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+			owner: self)
 		addTrackingArea(area)
 		trackingArea = area
 	}
@@ -751,7 +761,8 @@ public final class RiftChromeIconButton: NSButton {
 	}
 
 	private func updateImage() {
-		let configuration = NSImage.SymbolConfiguration(pointSize: symbolPointSize, weight: .regular)
+		let configuration = NSImage.SymbolConfiguration(
+			pointSize: symbolPointSize, weight: .regular)
 		image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?
 			.withSymbolConfiguration(configuration)
 		updateAppearance()
@@ -765,7 +776,8 @@ public final class RiftChromeIconButton: NSButton {
 		var color: CGColor?
 		if isHovered, isEnabled, showsHoverBackground {
 			effectiveAppearance.performAsCurrentDrawingAppearance {
-				color = (hoverBackgroundColor ?? foregroundColor.withAlphaComponent(dark ? 0.08 : 0.075))
+				color =
+					(hoverBackgroundColor ?? foregroundColor.withAlphaComponent(dark ? 0.08 : 0.075))
 					.cgColor
 			}
 		}
