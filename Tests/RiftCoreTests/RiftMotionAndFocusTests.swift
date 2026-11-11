@@ -94,6 +94,59 @@ import Testing
 	}
 }
 
+@Suite struct SwapNeighborTests {
+	private let bounds = CGRect(x: 0, y: 0, width: 300, height: 200)
+	private let metrics = RiftMetrics(dividerThickness: 0, minimumPaneSize: .zero, displayScale: 0)
+
+	@Test func overlappingCandidatesWin() {
+		// tl / bl on the left, one tall pane on the right: from bl, right is the tall pane.
+		let l: Layout = .split(
+			RiftSplit(
+				axis: .horizontal,
+				first: .split(RiftSplit(axis: .vertical, first: .pane("tl"), second: .pane("bl"))),
+				second: .pane("r")))
+		#expect(l.swapNeighbor(of: "bl", toward: .right, in: bounds, metrics: metrics) == "r")
+		#expect(l.swapNeighbor(of: "r", toward: .left, in: bounds, metrics: metrics) == "tl")
+		#expect(l.swapNeighbor(of: "tl", toward: .left, in: bounds, metrics: metrics) == nil)
+	}
+
+	@Test func smallerGapThenLayoutOrder() {
+		// a | b | c: from c going left, b (gap 0) beats a.
+		let l: Layout = .split(
+			RiftSplit(
+				axis: .horizontal, position: 1.0 / 3, first: .pane("a"),
+				second: .split(RiftSplit(axis: .horizontal, first: .pane("b"), second: .pane("c"))))
+		)
+		#expect(l.swapNeighbor(of: "c", toward: .left, in: bounds, metrics: metrics) == "b")
+		// top / (p | q): from top going down both overlap with gap 0; p comes first.
+		let m: Layout = .split(
+			RiftSplit(
+				axis: .vertical, first: .pane("top"),
+				second: .split(RiftSplit(axis: .horizontal, first: .pane("p"), second: .pane("q"))))
+		)
+		#expect(m.swapNeighbor(of: "top", toward: .down, in: bounds, metrics: metrics) == "p")
+	}
+
+	@Test func crossingPoint() {
+		let l: Layout = .split(
+			RiftSplit(
+				axis: .horizontal, position: 0.5,
+				first: .split(
+					RiftSplit(axis: .vertical, position: 0.5, first: .pane("a"), second: .pane("b"))
+				),
+				second: .split(
+					RiftSplit(axis: .vertical, position: 0.5, first: .pane("c"), second: .pane("d"))
+				)))
+		let hit = l.geometry(
+			in: bounds,
+			metrics: RiftMetrics(dividerThickness: 2, minimumPaneSize: .zero, displayScale: 0)
+		)
+		.dividerHit(at: CGPoint(x: 147, y: 99), hitThickness: 16)
+		#expect(hit?.isIntersection == true)
+		#expect(hit?.crossingPoint.map { abs($0.x - 150) < 1.5 && abs($0.y - 100) < 1.5 } == true)
+	}
+}
+
 @Suite struct MotionTests {
 	@Test func snappyIsCriticallyDamped() {
 		guard case .spring(let spring) = RiftMotionCurve.snappy.shape else {
@@ -144,9 +197,14 @@ import Testing
 	}
 
 	@Test func borderTimings() {
-		#expect(abs(RiftMotionCurve.snappy.borderGlideDuration - RiftMotionCurve.snappy.settlingDuration! / 2) < 1e-12)
+		#expect(
+			abs(
+				RiftMotionCurve.snappy.borderGlideDuration - RiftMotionCurve.snappy
+					.settlingDuration! / 2) < 1e-12)
 		#expect(RiftMotionCurve.standard.borderGlideDuration == 0.27)
-		#expect(RiftMotionTiming.borderCrossfade() == RiftMotionTiming(duration: 0.539, curve: .bezier(0.23, 1, 0.32, 1)))
+		#expect(
+			RiftMotionTiming.borderCrossfade()
+				== RiftMotionTiming(duration: 0.539, curve: .bezier(0.23, 1, 0.32, 1)))
 	}
 
 	@Test func styles() {

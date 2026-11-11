@@ -30,6 +30,7 @@ final class RiftPaneContainerView: RiftFlippedView {
 		}
 	}
 	var inactiveAlpha: CGFloat = 1 { didSet { updateFocusAppearance() } }
+	var activeAlpha: CGFloat = 1 { didSet { updateFocusAppearance() } }
 	var isFocused = false { didSet { updateFocusAppearance() } }
 
 	init(content: NSView) {
@@ -101,7 +102,7 @@ final class RiftPaneContainerView: RiftFlippedView {
 	private func updateFocusAppearance() {
 		border.isFocused = isFocused
 		header.isFocused = isFocused
-		contentClip.alphaValue = isFocused ? 1 : inactiveAlpha
+		contentClip.alphaValue = isFocused ? activeAlpha : inactiveAlpha
 	}
 
 	override func isAccessibilityElement() -> Bool { true }

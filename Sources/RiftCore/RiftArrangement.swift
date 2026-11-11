@@ -161,4 +161,59 @@ extension RiftLayout {
 	) -> PaneID? {
 		neighbor(of: pane, toward: direction, wraps: wraps)
 	}
+
+	/// The pane to swap with when moving `pane` toward `direction`.
+	///
+	/// Works on laid-out frames. Candidates lie wholly past the matching edge (within 1e-6).
+	/// Candidates that overlap `pane` across the axis beat those that don't; then the smaller gap
+	/// to the edge wins, then the smaller separation across the axis; remaining ties keep layout
+	/// order.
+	public func swapNeighbor(
+		of pane: PaneID,
+		toward direction: RiftDirection,
+		in rect: CGRect,
+		metrics: RiftMetrics = RiftMetrics()
+	) -> PaneID? {
+		let frames = geometry(in: rect, metrics: metrics).paneFrames
+		guard frames.count > 1, let from = frames[pane] else { return nil }
+		let epsilon: CGFloat = 1e-6
+		let horizontal = direction == .left || direction == .right
+		var best: (id: PaneID, overlaps: Bool, gap: CGFloat, separation: CGFloat)?
+		for id in paneIDs where id != pane {
+			guard let r = frames[id], !r.isEmpty else { continue }
+			let gap: CGFloat
+			switch direction {
+			case .left:
+				guard r.maxX <= from.minX + epsilon else { continue }
+				gap = from.minX - r.maxX
+			case .right:
+				guard r.minX >= from.maxX - epsilon else { continue }
+				gap = r.minX - from.maxX
+			case .up:
+				guard r.maxY <= from.minY + epsilon else { continue }
+				gap = from.minY - r.maxY
+			case .down:
+				guard r.minY >= from.maxY - epsilon else { continue }
+				gap = r.minY - from.maxY
+			}
+			let lo = horizontal ? max(r.minY, from.minY) : max(r.minX, from.minX)
+			let hi = horizontal ? min(r.maxY, from.maxY) : min(r.maxX, from.maxX)
+			let candidate = (
+				id: id, overlaps: hi - lo > epsilon, gap: max(0, gap), separation: max(0, lo - hi)
+			)
+			guard let current = best else {
+				best = candidate
+				continue
+			}
+			if candidate.overlaps != current.overlaps {
+				if candidate.overlaps { best = candidate }
+			} else if candidate.gap < current.gap - epsilon
+				|| (abs(candidate.gap - current.gap) <= epsilon
+					&& candidate.separation < current.separation - epsilon)
+			{
+				best = candidate
+			}
+		}
+		return best?.id
+	}
 }

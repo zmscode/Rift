@@ -49,7 +49,9 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 	/// pause expensive redraws, and so on, while anything is set.
 	public private(set) var structuralActivity: RiftStructuralActivity = [] {
 		didSet {
-			if structuralActivity != oldValue { onStructuralActivityChange?(structuralActivity) }
+			guard structuralActivity != oldValue else { return }
+			if structuralActivity.isEmpty != oldValue.isEmpty { updateScrollerSuppression() }
+			onStructuralActivityChange?(structuralActivity)
 		}
 	}
 	private var runningLayoutAnimations = 0
@@ -213,8 +215,10 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 		container.headerHeight = configuration.headerHeight
 		container.header.showsCloseButton = configuration.showsCloseButtons
 		container.cornerRadius = configuration.paneCornerRadius
-		container.inactiveAlpha = configuration.inactivePaneAlpha
 		container.border.isEnabled = false  // drawn by focusOverlay
+		let key = window?.isKeyWindow ?? true
+		container.activeAlpha = key ? 1 : configuration.inactiveWindowFocusedPaneAlpha
+		container.inactiveAlpha = key ? configuration.inactivePaneAlpha : configuration.inactiveWindowPaneAlpha
 	}
 
 	private func applyFocusBorderStyle() {
@@ -236,6 +240,7 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 		dropIndicator.color = configuration.dropIndicatorColor
 		dropIndicator.cornerRadius = configuration.dropIndicatorCornerRadius
 		applyFocusBorderStyle()
+		applyWindowFade()
 		updateTrackingArea()
 		updateWindowChrome()
 		updateGlass()
@@ -298,7 +303,9 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 			&& window != nil
 	}
 
-	private func placeContainers(animated: Bool, added: Set<PaneID>) {
+	private func placeContainers(
+		animated: Bool, added: Set<PaneID>, curve curveOverride: RiftMotionCurve? = nil
+	) {
 		let geometry = displayGeometry()
 		let animate = animated && shouldAnimate
 		var moves: [(id: PaneID, container: RiftPaneContainerView, from: CGRect, to: CGRect)] = []
@@ -321,7 +328,7 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 		}
 		refreshHeaderChrome(geometry.paneFrames)
 		refreshMovementLock()
-		guard animate, let curve = configuration.animationStyle.paneCurve else {
+		guard animate, let curve = curveOverride ?? configuration.animationStyle.paneCurve else {
 			for move in moves { move.container.frame = move.to }
 			placeGlass(geometry.paneFrames, animated: false)
 			syncFocusBorderFrame()
@@ -349,9 +356,13 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 			},
 			completion: { [weak self] in
 				guard let self else { return }
-				self.runningLayoutAnimations = max(0, self.runningLayoutAnimations - 1)
-				if self.runningLayoutAnimations == 0 {
-					self.structuralActivity.remove(.structuralTransition)
+				// Pane content keeps scrollers hidden for 0.15s after the motion settles.
+				DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+					guard let self else { return }
+					self.runningLayoutAnimations = max(0, self.runningLayoutAnimations - 1)
+					if self.runningLayoutAnimations == 0 {
+						self.structuralActivity.remove(.structuralTransition)
+					}
 				}
 			})
 	}
@@ -508,7 +519,8 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 	@discardableResult
 	public func swap(_ pane: PaneID? = nil, toward direction: RiftDirection) -> Bool {
 		guard zoomedPane == nil, let id = pane ?? focusedStorage, let layout = paneLayout,
-			let other = layout.neighbor(of: id, toward: direction),
+			let other = layout.swapNeighbor(
+				of: id, toward: direction, in: bounds, metrics: effectiveMetrics),
 			let next = layout.swapping(id, other)
 		else { return false }
 		commit(next, reason: .move, animated: true)
@@ -534,7 +546,7 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 		guard target != zoomedPane else { return }
 		zoomedPane = target
 		if let target { setFocus(target, notify: true, makeFirstResponder: true) }
-		placeContainers(animated: true, added: [])
+		placeContainers(animated: true, added: [], curve: configuration.animationStyle.chromeCurve)
 		rebuildAccessibility()
 		window?.invalidateCursorRects(for: self)
 		needsDisplay = true
@@ -672,6 +684,37 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 		}
 	}
 
+	/// Pane content alpha for the window's key state.
+	private func applyWindowFade() {
+		let key = window?.isKeyWindow ?? true
+		for container in containers.values {
+			container.activeAlpha = key ? 1 : configuration.inactiveWindowFocusedPaneAlpha
+			container.inactiveAlpha =
+				key ? configuration.inactivePaneAlpha : configuration.inactiveWindowPaneAlpha
+		}
+	}
+
+	/// Hides (or restores) the scrollers of scroll views inside the panes.
+	private var suppressedScrollers: [ObjectIdentifier: (NSScroller, CGFloat)] = [:]
+	private func updateScrollerSuppression() {
+		if structuralActivity.isEmpty || !configuration.hidesScrollersDuringStructuralChanges {
+			for (scroller, alpha) in suppressedScrollers.values { scroller.alphaValue = alpha }
+			suppressedScrollers.removeAll()
+			return
+		}
+		func visit(_ view: NSView) {
+			if let scrollView = view as? NSScrollView {
+				for scroller in [scrollView.verticalScroller, scrollView.horizontalScroller]
+				.compactMap({ $0 }) where suppressedScrollers[ObjectIdentifier(scroller)] == nil {
+					suppressedScrollers[ObjectIdentifier(scroller)] = (scroller, scroller.alphaValue)
+					scroller.alphaValue = 0
+				}
+			}
+			view.subviews.forEach(visit)
+		}
+		containers.values.forEach { visit($0) }
+	}
+
 	/// Keeps the focus border on the focused pane while panes move (a glide tracks it itself).
 	private func syncFocusBorderFrame() {
 		guard !borderGlides, let pane = borderPane, let target = containers[pane] else { return }
@@ -695,7 +738,10 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 		keyObservers = [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification].map {
 			NotificationCenter.default.addObserver(forName: $0, object: window, queue: .main) {
 				[weak self] _ in
-				MainActor.assumeIsolated { self?.applyFocusBorderStyle() }
+				MainActor.assumeIsolated {
+					self?.applyFocusBorderStyle()
+					self?.applyWindowFade()
+				}
 			}
 		}
 		applyFocusBorderStyle()
@@ -842,7 +888,9 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 			// Distance from the pane's left edge to just past the window buttons, if they sit over it.
 			var clearance: CGFloat = 0
 			if touchesTop, let buttons, buttons.maxX > frame.minX, buttons.minX < frame.maxX {
-				clearance = max(0, buttons.maxX + configuration.windowButtonSpacing - frame.minX)
+				let reserved = configuration.windowButtonInset.map { convert(CGPoint(x: $0, y: 0), from: nil).x }
+					?? buttons.maxX + configuration.windowButtonSpacing
+				clearance = max(0, reserved - frame.minX)
 			}
 			container.header.leadingInset = max(0, clearance - 6)
 			// Invisible strip: the corner after the buttons drags the pane; on the top row of a
@@ -972,11 +1020,25 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 	open override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 	open override var mouseDownCanMoveWindow: Bool { false }
 
-	private func cursor(for hit: RiftDividerHit) -> NSCursor {
+	private func cursor(for hit: RiftDividerHit, at point: CGPoint? = nil) -> NSCursor {
+		if #available(macOS 15.0, *) {
+			switch hit.axis {
+			case .horizontal: return .columnResize(directions: .all)
+			case .vertical: return .rowResize(directions: .all)
+			case nil:
+				// Where two dividers cross, the cursor points into the quadrant the pointer is in.
+				guard let point, let crossing = hit.crossingPoint else { return .crosshair }
+				let position: NSCursor.FrameResizePosition =
+					point.y < crossing.y
+					? (point.x < crossing.x ? .topLeft : .topRight)
+					: (point.x < crossing.x ? .bottomLeft : .bottomRight)
+				return .frameResize(position: position, directions: .all)
+			}
+		}
 		switch hit.axis {
-		case .horizontal: .resizeLeftRight
-		case .vertical: .resizeUpDown
-		case nil: .crosshair
+		case .horizontal: return .resizeLeftRight
+		case .vertical: return .resizeUpDown
+		case nil: return .crosshair
 		}
 	}
 
@@ -985,8 +1047,7 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 		guard configuration.allowsDividerDragging, zoomedPane == nil else { return }
 		for divider in displayGeometry().dividers {
 			let rect = divider.hitRect(thickness: configuration.metrics.dividerHitThickness)
-			addCursorRect(
-				rect, cursor: divider.axis == .horizontal ? .resizeLeftRight : .resizeUpDown)
+			addCursorRect(rect, cursor: cursor(for: RiftDividerHit(dividers: [divider])))
 		}
 	}
 
@@ -1004,7 +1065,7 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView {
 			return
 		}
 		dividerDrag = RiftDividerDrag(hit: hit, pointer: point)
-		let cursor = cursor(for: hit)
+		let cursor = cursor(for: hit, at: point)
 		dividerCursor = cursor
 		window?.disableCursorRects()
 		cursor.set()

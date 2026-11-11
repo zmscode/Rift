@@ -102,8 +102,16 @@ public enum RiftDividerMath {
 /// The dividers under a point. Two dividers on different axes mean the pointer is on an intersection.
 public struct RiftDividerHit: Equatable, Sendable {
 	public var dividers: [RiftDividerPlacement]
+	public init(dividers: [RiftDividerPlacement]) { self.dividers = dividers }
 	public var isIntersection: Bool { Set(dividers.map(\.axis)).count > 1 }
 	public var axis: RiftAxis? { isIntersection ? nil : dividers.first?.axis }
+	/// Where the two divider lines cross, for an intersection.
+	public var crossingPoint: CGPoint? {
+		guard let v = dividers.first(where: { $0.axis == .horizontal }),
+			let h = dividers.first(where: { $0.axis == .vertical })
+		else { return nil }
+		return CGPoint(x: v.line.midX, y: h.line.midY)
+	}
 }
 
 extension RiftGeometry {

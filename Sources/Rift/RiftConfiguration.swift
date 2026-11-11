@@ -43,8 +43,12 @@ public struct RiftConfiguration {
 	// Window
 	public var windowStyle: RiftWindowStyle = .standard
 	public var headerDragBehavior: RiftHeaderDragBehavior = .automatic
-	/// Space kept between the window buttons and pane header content.
+	/// Space kept between the window buttons and pane header content, used only when
+	/// `windowButtonInset` is `nil`.
 	public var windowButtonSpacing: CGFloat = 8
+	/// Width kept clear for the window buttons at the window's leading edge, in a headless window.
+	/// 76pt covers the close, minimise and zoom buttons. `nil` measures the buttons instead.
+	public var windowButtonInset: CGFloat? = 76
 
 	/// Liquid glass behind panes. Off by default.
 	public var glass = RiftGlassConfiguration()
@@ -85,6 +89,13 @@ public struct RiftConfiguration {
 	public var inactiveWindowFocusBorderOpacity: CGFloat = 0.35
 	/// Alpha applied to the content of panes that don't have focus (1 = no fading).
 	public var inactivePaneAlpha: CGFloat = 0.7
+	/// Content alpha while the window isn't key, for the focused pane and for the others.
+	/// Set both to the active values to keep panes the same in background windows.
+	public var inactiveWindowFocusedPaneAlpha: CGFloat = 0.8
+	public var inactiveWindowPaneAlpha: CGFloat = 0.5
+	/// Hide the scrollers of scroll views inside panes while panes are being reshaped
+	/// (`structuralActivity` is not empty), so they don't flash.
+	public var hidesScrollersDuringStructuralChanges = true
 	public var focusFollowsMouse = false
 
 	// Pane drag and drop
