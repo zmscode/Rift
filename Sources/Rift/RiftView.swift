@@ -877,6 +877,16 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 				sizes[id] = frame.size
 			}
 		}
+		// Hold each pane's content at the larger of the size it has now and the size it will end
+		// at, so it reflows at most once and never leaves part of its pane uncovered: a shrinking
+		// pane clips its content, a growing pane reveals it. A begin that interrupts another only
+		// ever grows the held size.
+		for (id, container) in containers {
+			guard let target = sizes[id] else { continue }
+			let current = container.pinnedPaneSize ?? container.bounds.size
+			sizes[id] = CGSize(
+				width: max(target.width, current.width), height: max(target.height, current.height))
+		}
 		containerAnimationPaneSizes = sizes
 		for (id, container) in containers { container.pinnedPaneSize = sizes[id] }
 	}
