@@ -203,6 +203,14 @@ public struct RiftPanePresentation: Equatable, Sendable {
 	public var hiddenTrailingWidth: CGFloat
 	/// The size of the pane's surface (its frame).
 	public var surfaceSize: CGSize?
+	/// Room to keep clear at the start and end of a title row along the pane's top edge (for the
+	/// window buttons and a sidebar's toggle). Lay your title out between them, as the built-in
+	/// headers do.
+	public var titleLeadingInset: CGFloat = 0
+	public var titleTrailingInset: CGFloat = 0
+	/// For a pane along the top of a headless window: the height of a row whose centre lines up
+	/// with the window buttons. `nil` elsewhere.
+	public var titleRowHeight: CGFloat?
 
 	public init(
 		isLayoutSettled: Bool, zoomFraction: CGFloat, contentSize: CGSize, targetSize: CGSize?,

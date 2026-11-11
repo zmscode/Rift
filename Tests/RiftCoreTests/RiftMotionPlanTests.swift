@@ -88,7 +88,9 @@ import Testing
 
 @Suite struct DividerFadeTests {
 	@Test func newLinesFadeInAndOldOnesOut() {
-		let kept = UUID(), added = UUID(), removed = UUID()
+		let kept = UUID()
+		let added = UUID()
+		let removed = UUID()
 		let result = riftDividerOpacities(
 			from: [kept: 1, removed: 1], to: [kept: 1, added: 1], progress: 0.25)
 		#expect(result[kept] == 1)

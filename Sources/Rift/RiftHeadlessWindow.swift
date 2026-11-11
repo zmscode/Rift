@@ -19,6 +19,15 @@ public final class RiftHeadlessWindow {
 	public var horizontalOffset: CGFloat {
 		didSet { if horizontalOffset != oldValue { layoutButtons() } }
 	}
+	/// The titlebar height AppKit centres the buttons in. `nil` uses `rowHeight` (at least the
+	/// buttons' height plus 2).
+	public var titlebarHeight: CGFloat? {
+		didSet { if titlebarHeight != oldValue { layoutButtons() } }
+	}
+	/// Moves the button group down by this much (only with AppKit's titlebar settings).
+	public var verticalOffset: CGFloat = 0 {
+		didSet { if verticalOffset != oldValue { layoutButtons() } }
+	}
 	/// Called after the buttons move, so views can reserve space for them.
 	public var onLayout: (() -> Void)?
 
@@ -154,9 +163,14 @@ public final class RiftHeadlessWindow {
 		if usesTitlebarSettings {
 			// AppKit centres the buttons in the titlebar height; the offset shifts the group
 			// (its y is stored negated, so a positive value would move the buttons up).
-			let height = max(rowHeight, (window.standardWindowButton(.closeButton)?.frame.height ?? 16) + 2)
+			let height =
+				titlebarHeight
+				?? max(rowHeight, (window.standardWindowButton(.closeButton)?.frame.height ?? 16) + 2)
+			let fullScreen = window.styleMask.contains(.fullScreen)
 			Self.applyTitlebarSettings(
-				to: window, height: height, offset: CGPoint(x: horizontalOffset, y: -0.0))
+				to: window, height: fullScreen ? -1 : height,
+				offset: fullScreen
+					? CGPoint(x: 0, y: -0.0) : CGPoint(x: horizontalOffset, y: -verticalOffset))
 			return
 		}
 		guard !window.styleMask.contains(.fullScreen),

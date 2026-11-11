@@ -348,6 +348,10 @@ final class RiftPaneHeaderView: RiftFlippedView {
 	}
 	/// Space kept clear at the leading edge, for the window's buttons.
 	var leadingInset: CGFloat = 0 { didSet { if leadingInset != oldValue { needsLayout = true } } }
+	/// Room kept clear at the trailing edge (for example for a sidebar's toggle button).
+	var trailingInset: CGFloat = 0 {
+		didSet { if trailingInset != oldValue { needsLayout = true } }
+	}
 	var isFocused = false {
 		didSet {
 			titleField.textColor = isFocused ? .labelColor : .secondaryLabelColor
@@ -412,7 +416,7 @@ final class RiftPaneHeaderView: RiftFlippedView {
 			x += size + 4
 		}
 		// Keep the title centred in the header when there's room, clear of the leading controls.
-		let side = max(28, x + 2)
+		let side = max(28, x + 2, trailingInset + 8)
 		let height = titleField.intrinsicContentSize.height
 		let width = max(0, bounds.width - side * 2)
 		let centred = CGRect(x: side, y: (bounds.height - height) / 2, width: width, height: height)
@@ -420,7 +424,8 @@ final class RiftPaneHeaderView: RiftFlippedView {
 			titleField.frame = centred
 		} else {
 			titleField.frame = CGRect(
-				x: x + 2, y: centred.minY, width: max(0, bounds.width - x - 8), height: height)
+				x: x + 2, y: centred.minY, width: max(0, bounds.width - x - 8 - trailingInset),
+				height: height)
 		}
 	}
 

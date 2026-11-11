@@ -49,6 +49,9 @@ public struct RiftConfiguration: Equatable {
 	/// Width kept clear for the window buttons at the window's leading edge, in a headless window.
 	/// 76pt covers the close, minimise and zoom buttons. `nil` measures the buttons instead.
 	public var windowButtonInset: CGFloat? = 76
+	/// The titlebar height and window-button offset for headless windows. `nil` centres the
+	/// buttons in the pane header row (`headerHeight`).
+	public var titlebarMetrics: RiftTitlebarMetrics? = nil
 
 	/// What is drawn behind each pane's content (background, glass, fills, strokes), and how
 	/// opaque the content is per state. `nil` (the default) draws nothing; content draws its own
@@ -94,6 +97,11 @@ public struct RiftConfiguration: Equatable {
 	public var showsFocusBorder = true
 	/// `nil` uses the system accent color.
 	public var focusBorderColor: NSColor?
+	/// A named border colour, resolved through `colorPalette`. `focusBorderColor` wins when set.
+	public var focusBorderPreset: RiftFocusBorderColor = .accent
+	/// The colours the presets name: system colours by default; give your app's (or terminal
+	/// theme's) palette to match it.
+	public var colorPalette = RiftColorPalette()
 	public var focusBorderWidth: CGFloat = 2
 	/// How the focus border gets from one pane to the next.
 	public var focusBorderTransition: RiftFocusBorderTransition = .glide
@@ -291,6 +299,73 @@ public enum RiftDividerBlendMode: String, Sendable, Hashable, CaseIterable {
 		case .colorDodge: "colorDodgeBlendMode"
 		case .overlay: "overlayBlendMode"
 		case .color: "colorBlendMode"
+		}
+	}
+}
+
+/// The titlebar height and window-button group offset a headless window uses (where AppKit takes
+/// them; see `RiftHeadlessWindow`). Not applied in full screen.
+public struct RiftTitlebarMetrics: Equatable, Sendable {
+	public var height: CGFloat
+	/// Positive x moves the buttons right, positive y down.
+	public var buttonOffset: CGPoint
+
+	public init(height: CGFloat, buttonOffset: CGPoint) {
+		self.height = height
+		self.buttonOffset = buttonOffset
+	}
+
+	private static var baseX: CGFloat {
+		ProcessInfo.processInfo.isOperatingSystemAtLeast(
+			OperatingSystemVersion(majorVersion: 26, minorVersion: 0, patchVersion: 0)) ? 8 : 10
+	}
+
+	/// With a sidebar beside the layout: a 42pt titlebar, buttons moved 1pt right and 4pt down
+	/// (compact: 5pt left and 2pt up) from 8pt in (10pt before macOS 26).
+	public static func sidebar(_ density: RiftChromeDensity) -> Self {
+		let compact = density == .compact
+		return Self(
+			height: 42, buttonOffset: CGPoint(x: baseX + (compact ? -5 : 1), y: compact ? -2 : 4))
+	}
+
+	/// With a horizontal tab bar across the top: a 46pt titlebar (40 compact), buttons 1pt (4pt
+	/// compact) left of the base inset.
+	public static func tabBar(_ density: RiftChromeDensity) -> Self {
+		let compact = density == .compact
+		return Self(height: compact ? 40 : 46, buttonOffset: CGPoint(x: baseX - (compact ? 4 : 1), y: 0))
+	}
+}
+
+/// The named colours a focus border can take.
+public enum RiftFocusBorderColor: String, Sendable, Hashable, CaseIterable {
+	case accent, red, blue, green, yellow, cyan, magenta
+	/// The content's foreground colour (for a terminal, its text colour).
+	case foreground
+}
+
+/// The colours behind `RiftFocusBorderColor`.
+public struct RiftColorPalette: Equatable {
+	public var accent: NSColor = .controlAccentColor
+	public var red: NSColor = .systemRed
+	public var blue: NSColor = .systemBlue
+	public var green: NSColor = .systemGreen
+	public var yellow: NSColor = .systemYellow
+	public var cyan: NSColor = .systemCyan
+	public var magenta: NSColor = .systemPink
+	public var foreground: NSColor = .labelColor
+
+	public init() {}
+
+	public func color(_ name: RiftFocusBorderColor) -> NSColor {
+		switch name {
+		case .accent: accent
+		case .red: red
+		case .blue: blue
+		case .green: green
+		case .yellow: yellow
+		case .cyan: cyan
+		case .magenta: magenta
+		case .foreground: foreground
 		}
 	}
 }

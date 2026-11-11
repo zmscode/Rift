@@ -31,6 +31,7 @@ A split-pane layout component for macOS. Use it from SwiftUI with `RiftLayoutVie
 - **Focus:**
     - Clicking anywhere in a pane focuses it.
     - Optional: focus follows the mouse.
+    - Focus border colour: any `NSColor`, or a named preset (`focusBorderPreset`: accent, red, blue, green, yellow, cyan, magenta, foreground) taken from `colorPalette`, which you can set to your app's or terminal theme's colours.
     - Accent focus border, 2pt, stroked with a gradient (the colour mixed 10% toward white, the colour, and 10% toward black, in OKLab) at 135°. Corners that meet the window's corners take `layoutCornerRadius`, and divider lines under the border are hidden (`focusBorderCoversDividers`).
     - Unfocused panes can lose their surface look, their content opacity, or both (`inactivePaneFade`).
 - **Motion:** every animated layout change is one plan, sampled each frame:
@@ -39,6 +40,13 @@ A split-pane layout component for macOS. Use it from SwiftUI with `RiftLayoutVie
     - Each divider line fades on its own: new lines fade in, removed lines fade out.
     - A change that interrupts another starts from where the panes are now, and a pane still growing keeps growing from its current size and opacity.
     - `paneContentSizing = .pinnedDuringMotion` holds content at the larger of its start and end size until the motion ends.
+- **Sidebar:** `RiftSidebarContainerView` (SwiftUI: `RiftSidebarSplitView`) puts a sidebar on the left or right of your content.
+    - 240pt wide by default; drag its inner edge to resize it between 167pt and 60% of the window (at most 480pt).
+    - Fold it with its toggle button (28×28 beside the window buttons: the `sidebar.leading` symbol at 13pt, in the label colour at 70% until hovered, with a rounded hover background), `toggleSidebar()`, or a two-finger swipe toward its side (44pt, mostly sideways; `swipe` can require ⌥ or turn it off). The fold runs on the chrome curve: the sidebar stays put and a mask covers it as the content slides over.
+    - Folding shrinks the window by the sidebar's width (never below 480pt, or 720pt minus the sidebar) and unfolding grows it back, so the panes keep their size. With `preservesWindowWidth` the content takes the space instead, and layouts inside are told before it starts.
+    - Layouts inside keep room in their top pane headers for the window buttons and the toggle: none while a left sidebar is open, growing to 116pt as it folds (76pt beside a right sidebar).
+    - `RiftTitlebarMetrics.sidebar(_:)` gives the headless window the matching 42pt titlebar and button offset.
+- **Closing busy panes:** give `paneActivity` a short phrase for panes that are busy ("is still working"). Closing them (`close`, `closeOthers`) first shows a card over the layout, which is dimmed except for the pane in question. It lists the busy panes (click one to go to it; at most three, then a count), with Cancel (Escape) and Close (Return).
 - **Headless windows:** set `configuration.windowStyle = .headless`.
     - The titlebar and title are hidden, and content runs edge to edge.
     - The real close, minimise and zoom buttons stay, centred in the top row of pane headers. Rift sets the window's titlebar height (`customTitlebarHeight` on the frame view) and the button group offset (`standardWindowButtonGroupOffset`), so AppKit lays the buttons out itself. These are private AppKit settings: Rift checks that the window responds to them first and, where it doesn't, resizes the titlebar container with public `NSView` calls instead.
@@ -54,6 +62,7 @@ A split-pane layout component for macOS. Use it from SwiftUI with `RiftLayoutVie
     - The `RiftView` listens for its own notices too. When an animation begins, it holds each pane's content at the larger of its current size and its final size, clipped to the pane, until the last end notice arrives. Content therefore reflows once instead of on every frame, and never leaves a gap. Animations that overlap (a fold reversed halfway) are counted, so the content is only released when all of them have ended.
 - **Structural activity:** `structuralActivity` and `onStructuralActivityChange` report what is reshaping the panes right now: an animated layout change, a divider drag, a live window resize or a pane drag. Pane content can use this to stop scrollers flashing or to pause redraws. While anything reshapes, views that adopt `RiftScrollerSuppressing` are asked to hide their own scrollers; other scroll views' scrollers are faded out.
 - **Presentation:** each pane's content (and any object added with `addPresentationObserver(_:for:)`) hears whether the layout has settled, the animated zoom fraction, its content, target and surface sizes, and how much content is cut off past the trailing edge.
+    - It also hears where to put a title: `titleLeadingInset` / `titleTrailingInset` (the room kept for the window buttons and a sidebar's toggle, which changes as the sidebar folds) and `titleRowHeight` (for panes along the top of a headless window, a row centred on the window buttons). Lay a title out between the insets in that row and it lines up with the buttons and moves aside for them.
 - **Pane surfaces:** Rift draws no pane background itself. Set `configuration.paneSurface` to draw one behind each pane's content, and `configuration.windowSurface` for one behind the whole layout (a window material with a tint and backdrop, and a soft inner shadow along the window's edge).
   - `RiftPaneSurfaces.modern(.comfortable)` gives glass cards: 10pt corners, a tinted glass layer (liquid glass on macOS 26 and later, a visual-effect material before), a light fill, and in dark mode an overlay backdrop. `.modern(.compact)` gives touching panes with a 1pt line drawn over their shared edges (`metrics.lineThickness`), a faint backdrop on the focused pane in dark mode, and near-white fills in light mode. The `.comfortable` and `.compact` configuration presets set the matching window surface too.
   - Each surface has a style per state (pane, focused pane, and both again for background windows) and per appearance. A style stacks shadows, a backdrop, glass, two fills and strokes, and sets the content's opacity.
@@ -68,7 +77,7 @@ A split-pane layout component for macOS. Use it from SwiftUI with `RiftLayoutVie
 | ---------- | ------------------------------------------------------------------------------------------------------------ |
 | `RiftCore` | Layout tree, geometry, divider-drag maths, drop zones, arrangement. Pure Swift and fully unit-tested.        |
 | `Rift`     | `RiftView` (AppKit), the pane drag session, and the SwiftUI wrapper `RiftLayoutView`. Re-exports `RiftCore`. |
-| `RiftDemo` | A demo app with a controls sidebar for trying every feature.                                                  |
+| `RiftDemo` | Rift Workbench: a sidebar, a split layout of small tools, and settings for every feature. |
 
 ## Usage
 
@@ -136,14 +145,25 @@ swift test
 swift run RiftDemo
 ```
 
-The demo is a SwiftUI app built on `RiftLayoutView`. Its window has a controls sidebar on the right. It has buttons for splitting, closing, focus, swap,
-resize, balance and zoom, plus switches for motion style, the focus border transition, fading, scroller
-suppression, centre drops, pane surfaces, the headless window and headers. A status line shows the focused pane
-and what is reshaping the panes. Drag panes by their top-left corner, and drag dividers, with the mouse.
+The demo is **Rift Workbench**, a SwiftUI app built on `RiftSidebarSplitView` and `RiftLayoutView`.
 
-| Shortcut | Action                |
-| -------- | --------------------- |
-| ⌘D / ⇧⌘D | Split right / down    |
-| ⌘W       | Close pane            |
-| ⌘N       | New window            |
-| ⌃⌘S      | Hide or show controls |
+- The **navigator** sidebar lists the open panes (click to focus; right-click to close or close the others), adds tools beside the focused pane, and holds the settings: card, tile or plain looks; motion style; pop-in or edge-growth panes; border transition, colour swatches and gradient; what unfocused panes lose; content sizing while moving; balancing; asking before closing busy panes; and the sidebar's side, swipe and window-width behaviour. Fold it with its toggle, a sideways swipe, or ⌥⌘S.
+- Each pane is a **tool** that shows a feature at work:
+    - **Notes:** a text editor (focus and unfocused fading).
+    - **Inspector:** the pane's live presentation (settled, zoom fraction, content, target and surface sizes, what is reshaping).
+    - **Log:** a growing log in an `NSScrollView` that hides its own scroller while the layout moves (`RiftScrollerSuppressing`).
+    - **Orbit:** an animation that pauses while the layout moves.
+    - **Clock:** a clock that grows with the zoom fraction.
+- Log and Orbit count as busy, so closing them shows the confirmation card. Dragged panes show a small card under the pointer; dropping one outside the window opens it in a new one.
+
+| Shortcut         | Action                    |
+| ---------------- | ------------------------- |
+| ⌘D / ⇧⌘D         | Split right / down        |
+| ⌘W               | Close pane                |
+| ⌥⌘W              | Close other panes         |
+| ⇧⌘↩              | Zoom pane                 |
+| ⌥⌘=              | Balance                   |
+| ⌥⌘ arrows        | Move focus                |
+| ⌃⌘ arrows        | Swap with a neighbour     |
+| ⌥⌘S              | Fold or unfold the sidebar |
+| ⌘N               | New window                |

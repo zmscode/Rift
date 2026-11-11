@@ -131,6 +131,7 @@ public struct RiftLayoutView<PaneID: Hashable & Sendable, Content: View>: NSView
 	private let onStructuralActivityChange: ((RiftStructuralActivity) -> Void)?
 	private let onTearOut: ((PaneID, CGPoint) -> Void)?
 	private let dragPreview: ((PaneID) -> AnyView)?
+	private let paneActivity: ((PaneID) -> String?)?
 	private let content: (RiftPaneContext<PaneID>) -> Content
 
 	/// - Parameters:
@@ -141,6 +142,8 @@ public struct RiftLayoutView<PaneID: Hashable & Sendable, Content: View>: NSView
 	///     somewhere else (for example a new window with its own `RiftLayoutView`).
 	///   - dragPreview: the view floating under the pointer while a pane is dragged, sized to fit.
 	///     Without one, a snapshot of the pane is shown.
+	///   - paneActivity: what a busy pane is doing ("is still working"); closing busy panes asks
+	///     first.
 	///   - content: the pane's SwiftUI content.
 	public init(
 		layout: Binding<RiftLayout<PaneID>?>,
@@ -154,6 +157,7 @@ public struct RiftLayoutView<PaneID: Hashable & Sendable, Content: View>: NSView
 		onStructuralActivityChange: ((RiftStructuralActivity) -> Void)? = nil,
 		onTearOut: ((PaneID, CGPoint) -> Void)? = nil,
 		dragPreview: ((PaneID) -> AnyView)? = nil,
+		paneActivity: ((PaneID) -> String?)? = nil,
 		@ViewBuilder content: @escaping (RiftPaneContext<PaneID>) -> Content
 	) {
 		_layout = layout
@@ -167,6 +171,7 @@ public struct RiftLayoutView<PaneID: Hashable & Sendable, Content: View>: NSView
 		self.onStructuralActivityChange = onStructuralActivityChange
 		self.onTearOut = onTearOut
 		self.dragPreview = dragPreview
+		self.paneActivity = paneActivity
 		self.content = content
 	}
 
@@ -206,6 +211,7 @@ public struct RiftLayoutView<PaneID: Hashable & Sendable, Content: View>: NSView
 		view.onDividerDragChanged = { coordinator.parent.onDividerDragChanged?($0) }
 		view.onStructuralActivityChange = { coordinator.parent.onStructuralActivityChange?($0) }
 		view.onTearOut = { pane, _, point in coordinator.parent.onTearOut?(pane, point) }
+		view.paneActivity = { pane in coordinator.parent.paneActivity?(pane) }
 		view.makeDragPreview = { pane in
 			coordinator.parent.dragPreview.map { NSHostingView(rootView: $0(pane)) }
 		}
@@ -252,5 +258,113 @@ extension RiftLayoutView {
 			layout: layout, focusedPane: focusedPane, configuration: configuration,
 			controller: controller, title: title
 		) { paneContent($0.paneID) }
+	}
+}
+
+/// A sidebar beside your content, for SwiftUI (see `RiftSidebarContainerView`). Put a
+/// `RiftLayoutView` in the content and its pane headers keep room for the window buttons and the
+/// sidebar's toggle as the sidebar folds.
+///
+/// ```swift
+/// @State var collapsed = false
+/// @State var width: CGFloat = 240
+/// RiftSidebarSplitView(isCollapsed: $collapsed, width: $width) {
+///     MySidebar()
+/// } content: {
+///     RiftLayoutView(layout: $layout) { pane in MyPane(pane) }
+/// }
+/// ```
+public struct RiftSidebarSplitView<Sidebar: View, Content: View>: NSViewRepresentable {
+	@Binding private var isCollapsed: Bool
+	@Binding private var width: CGFloat
+	private let position: RiftSidebarPosition
+	private let density: RiftChromeDensity
+	private let preservesWindowWidth: Bool
+	private let swipe: RiftSidebarSwipe
+	private let animationStyle: RiftAnimationStyle
+	private let hidesToggleButton: Bool
+	private let onCollapseProgressChange: ((CGFloat) -> Void)?
+	private let sidebar: Sidebar
+	private let content: Content
+
+	/// - Parameters:
+	///   - isCollapsed: whether the sidebar is folded away; written when the user folds it.
+	///   - width: the sidebar's open width; written when the user resizes it.
+	///   - preservesWindowWidth: keep the window's width when folding (the content takes the
+	///     space) instead of shrinking and growing the window.
+	///   - animationStyle: the fold uses this style's chrome curve.
+	public init(
+		isCollapsed: Binding<Bool>,
+		width: Binding<CGFloat> = .constant(RiftSidebarMath.defaultWidth),
+		position: RiftSidebarPosition = .left,
+		density: RiftChromeDensity = .comfortable,
+		preservesWindowWidth: Bool = false,
+		swipe: RiftSidebarSwipe = .swipe,
+		animationStyle: RiftAnimationStyle = .snappy,
+		hidesToggleButton: Bool = false,
+		onCollapseProgressChange: ((CGFloat) -> Void)? = nil,
+		@ViewBuilder sidebar: () -> Sidebar,
+		@ViewBuilder content: () -> Content
+	) {
+		_isCollapsed = isCollapsed
+		_width = width
+		self.position = position
+		self.density = density
+		self.preservesWindowWidth = preservesWindowWidth
+		self.swipe = swipe
+		self.animationStyle = animationStyle
+		self.hidesToggleButton = hidesToggleButton
+		self.onCollapseProgressChange = onCollapseProgressChange
+		self.sidebar = sidebar()
+		self.content = content()
+	}
+
+	public final class Coordinator {
+		var parent: RiftSidebarSplitView
+		let sidebarHost: NSHostingView<AnyView>
+		let contentHost: NSHostingView<AnyView>
+		init(_ parent: RiftSidebarSplitView) {
+			self.parent = parent
+			sidebarHost = NSHostingView(rootView: AnyView(parent.sidebar.ignoresSafeArea()))
+			contentHost = NSHostingView(rootView: AnyView(parent.content.ignoresSafeArea()))
+			sidebarHost.sizingOptions = []
+			contentHost.sizingOptions = []
+		}
+	}
+
+	public func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+	public func makeNSView(context: Context) -> RiftSidebarContainerView {
+		let coordinator = context.coordinator
+		let view = RiftSidebarContainerView(
+			sidebar: coordinator.sidebarHost, content: coordinator.contentHost)
+		view.width = width
+		if isCollapsed { view.setCollapsed(true, animated: false) }
+		view.onCollapsedChange = { coordinator.parent.isCollapsed = $0 }
+		view.onWidthChange = { coordinator.parent.width = $0 }
+		view.onCollapseProgressChange = { coordinator.parent.onCollapseProgressChange?($0) }
+		apply(to: view)
+		return view
+	}
+
+	public func updateNSView(_ view: RiftSidebarContainerView, context: Context) {
+		context.coordinator.parent = self
+		context.coordinator.sidebarHost.rootView = AnyView(sidebar.ignoresSafeArea())
+		context.coordinator.contentHost.rootView = AnyView(content.ignoresSafeArea())
+		apply(to: view)
+		if view.width != width { view.width = width }
+		if view.isCollapsed != isCollapsed { view.setCollapsed(isCollapsed, animated: true) }
+		view.refreshChrome()
+	}
+
+	private func apply(to view: RiftSidebarContainerView) {
+		if view.position != position { view.position = position }
+		if view.density != density { view.density = density }
+		view.preservesWindowWidth = preservesWindowWidth
+		view.swipe = swipe
+		view.foldCurve = animationStyle.chromeCurve
+		if view.hidesToggleButton != hidesToggleButton {
+			view.hidesToggleButton = hidesToggleButton
+		}
 	}
 }

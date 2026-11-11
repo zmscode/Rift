@@ -29,6 +29,12 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 
 	/// Creates the content view for a pane the first time it appears.
 	public var makePaneView: (PaneID) -> NSView
+	/// What a busy pane is doing, as a short phrase ("is still working"). Closing busy panes
+	/// (with `close` or `closeOthers`) first shows a confirmation card listing them. `nil`, or
+	/// `nil` for every pane, closes straight away.
+	public var paneActivity: ((PaneID) -> String?)?
+	private lazy var closeConfirmation = RiftCloseConfirmation()
+
 	/// Builds the floating preview shown while a pane is dragged, sized to its fitting size.
 	/// `nil` (or returning `nil`) shows a snapshot of the pane instead.
 	public var makeDragPreview: ((PaneID) -> NSView?)?
@@ -84,6 +90,10 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 	/// Panes still growing out of an edge, and how far they have got.
 	private var growthState: [PaneID: (transition: RiftGrowthTransition, progress: Double)] = [:]
 	private let windowSurfaceView = RiftWindowSurfaceView()
+	/// Room for the window buttons reported by a sidebar this view sits in.
+	private var sidebarChrome: RiftSidebarChrome?
+	/// Title room per pane: leading and trailing insets and the button-row height.
+	private var titleRooms: [PaneID: (leading: CGFloat, trailing: CGFloat, row: CGFloat?)] = [:]
 	private lazy var dropOverlay = RiftDropOverlayWindow()
 	private static var borderTrack: AnyHashable { "rift.focusBorder" }
 	private static var layoutTrack: AnyHashable { "rift.layout" }
@@ -295,12 +305,15 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 	}
 
 	private func applyFocusBorderStyle() {
-		let base = (configuration.focusBorderColor ?? .controlAccentColor)
+		let base = (configuration.focusBorderColor
+			?? configuration.colorPalette.color(configuration.focusBorderPreset))
 			.withAlphaComponent(configuration.focusBorderOpacity)
 		let active = window?.isKeyWindow ?? true
-		let color = active
+		let color =
+			active
 			? base
-			: base.withAlphaComponent(base.alphaComponent * configuration.inactiveWindowFocusBorderOpacity)
+			: base.withAlphaComponent(
+				base.alphaComponent * configuration.inactiveWindowFocusBorderOpacity)
 		var gradient: [NSColor]?
 		if configuration.focusBorderUsesGradient {
 			effectiveAppearance.performAsCurrentDrawingAppearance {
@@ -530,10 +543,13 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 				// Zoom fractions.
 				var zooms: [PaneID: CGFloat] = [:]
 				for id in zoomChanging {
-					let a = startZoom[id] ?? 0, b = endZoom[id] ?? 0
+					let a = startZoom[id] ?? 0
+					let b = endZoom[id] ?? 0
 					zooms[id] = a + (b - a) * CGFloat(min(max(p, 0), 1))
 				}
-				self.zoomFractions = endZoom.merging(zooms) { _, new in new }.filter { $0.value > 0 }
+				self.zoomFractions = endZoom.merging(zooms) { _, new in new }.filter {
+					$0.value > 0
+				}
 				for id in zoomChanging { self.publishPresentation(for: id, settled: false) }
 				self.syncFocusBorderFrame()
 			},
@@ -552,7 +568,9 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 				self.zoomFractions = endZoom
 				// The layout has settled once the last running motion ends.
 				if self.runningLayoutAnimations == 1 {
-					for id in self.containers.keys { self.publishPresentation(for: id, settled: true) }
+					for id in self.containers.keys {
+						self.publishPresentation(for: id, settled: true)
+					}
 					self.onLayoutSettled?()
 				}
 				// Pane content keeps scrollers hidden for 0.15s after the motion settles.
@@ -576,7 +594,8 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 			ObjectIdentifier(container), duration: state.duration(style: pop),
 			apply: { [weak container] elapsed in
 				guard let container else { return }
-				container.rift_setPresentationScale(CGFloat(state.scale(elapsed: elapsed, style: pop)))
+				container.rift_setPresentationScale(
+					CGFloat(state.scale(elapsed: elapsed, style: pop)))
 				container.popAlpha = CGFloat(state.opacity(elapsed: elapsed, style: pop))
 			},
 			completion: { [weak container] in
@@ -603,7 +622,10 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 	private func renderDividerLines() {
 		dividerLines.frame = bounds
 		let lines = dividerState.values.map {
-			(rect: dividerLines.convert($0.rect, from: self), opacity: CGFloat($0.opacity * dividerLineOpacity))
+			(
+				rect: dividerLines.convert($0.rect, from: self),
+				opacity: CGFloat($0.opacity * dividerLineOpacity)
+			)
 		}
 		dividerLines.show(
 			lines, color: configuration.dividerColor, blendMode: configuration.dividerBlendMode)
@@ -648,8 +670,36 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 	@discardableResult
 	public func close(_ pane: PaneID? = nil) -> Bool {
 		guard let id = pane ?? focusedStorage, let layout = paneLayout,
-			let removal = layout.removing(.pane(id))
+			layout.removing(.pane(id)) != nil
 		else { return false }
+		if confirmClose(.pane, panes: [id], spotlight: id, perform: { [weak self] in self?.closeNow(id) }) {
+			return true
+		}
+		return closeNow(id)
+	}
+
+	/// Shows the confirmation card when any of `panes` is busy; returns whether it did.
+	private func confirmClose(
+		_ subject: RiftCloseSubject, panes: [PaneID], spotlight: PaneID,
+		perform: @escaping () -> Void
+	) -> Bool {
+		guard let paneActivity, window != nil else { return false }
+		let rows = panes.enumerated().compactMap { index, id -> RiftCloseConfirmation.Row? in
+			guard let activity = paneActivity(id) else { return nil }
+			return RiftCloseConfirmation.Row(
+				id: index, text: "\(title(for: id)) \(activity)",
+				goTo: { [weak self] in self?.focus(id) })
+		}
+		guard !rows.isEmpty else { return false }
+		let rect = containers[spotlight]?.frame ?? bounds
+		closeConfirmation.present(
+			subject: subject, rows: rows, in: self, spotlight: rect, confirm: perform, cancel: {})
+		return true
+	}
+
+	@discardableResult
+	private func closeNow(_ id: PaneID) -> Bool {
+		guard let layout = paneLayout, let removal = layout.removing(.pane(id)) else { return false }
 		let wasFocused = focusedStorage == id
 		if let container = containers.removeValue(forKey: id) {
 			animateOut(container, edge: layout.growthEdge(of: id))
@@ -697,7 +747,8 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 					guard let container else { return }
 					let p = timing.progress(elapsed: elapsed)
 					container.frame = transition.displayFrame(progress: p)
-					container.popAlpha = CGFloat(transition.opacity(progress: p, direction: .removal))
+					container.popAlpha = CGFloat(
+						transition.opacity(progress: p, direction: .removal))
 				},
 				completion: { [weak container] in container?.removeFromSuperview() })
 		}
@@ -764,6 +815,19 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 		guard let keep = pane ?? focusedStorage, let layout = paneLayout, layout.contains(keep),
 			layout.paneCount > 1
 		else { return false }
+		let others = layout.paneIDs.filter { $0 != keep }
+		if confirmClose(
+			.otherPanes, panes: others, spotlight: keep,
+			perform: { [weak self] in self?.closeOthersNow(keep) })
+		{
+			return true
+		}
+		return closeOthersNow(keep)
+	}
+
+	@discardableResult
+	private func closeOthersNow(_ keep: PaneID) -> Bool {
+		guard let layout = paneLayout, layout.contains(keep), layout.paneCount > 1 else { return false }
 		let closed = layout.paneIDs.filter { $0 != keep }
 		for id in closed {
 			if let container = containers.removeValue(forKey: id) {
@@ -895,7 +959,8 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 		borderPane = pane
 		let moved = previous != nil && previous != pane && !focusOverlay.isHidden
 		focusOverlay.isHidden = false
-		let transition = shouldAnimate && animated && moved ? configuration.focusBorderTransition : .off
+		let transition =
+			shouldAnimate && animated && moved ? configuration.focusBorderTransition : .off
 		switch transition {
 		case .off:
 			if previous == pane, motion.isRunning(Self.borderTrack) { return }
@@ -943,20 +1008,26 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 
 	private func contentSize(forPaneFrame frame: CGRect) -> CGSize {
 		let top =
-			configuration.showsPaneHeaders ? configuration.headerHeight : configuration.headerlessTopInset
+			configuration.showsPaneHeaders
+			? configuration.headerHeight : configuration.headerlessTopInset
 		return CGSize(width: frame.width, height: max(0, frame.height - top))
 	}
 
 	/// Also tells `observer` about `pane`'s presentation changes (held weakly).
-	public func addPresentationObserver(_ observer: RiftPanePresentationObserving, for pane: PaneID) {
+	public func addPresentationObserver(_ observer: RiftPanePresentationObserving, for pane: PaneID)
+	{
 		var list = presentationObservers[pane, default: []].filter { $0.observer != nil }
 		guard !list.contains(where: { $0.observer === observer }) else { return }
 		list.append(RiftWeakPresentationObserver(observer))
 		presentationObservers[pane] = list
-		if let presentation = presentations[pane] { observer.riftPanePresentationDidChange(presentation) }
+		if let presentation = presentations[pane] {
+			observer.riftPanePresentationDidChange(presentation)
+		}
 	}
 
-	public func removePresentationObserver(_ observer: RiftPanePresentationObserving, for pane: PaneID) {
+	public func removePresentationObserver(
+		_ observer: RiftPanePresentationObserving, for pane: PaneID
+	) {
 		presentationObservers[pane]?.removeAll { $0.observer == nil || $0.observer === observer }
 	}
 
@@ -971,12 +1042,17 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 		let clip = container.contentClip.bounds.size
 		let pinned = container.pinnedPaneSize != nil
 		let previousTarget = presentations[id].flatMap { $0.isLayoutSettled ? nil : $0.targetSize }
-		let presentation = RiftPanePresentation(
+		var presentation = RiftPanePresentation(
 			isLayoutSettled: settled, zoomFraction: zoomFractions[id] ?? 0, contentSize: content,
 			targetSize: settled ? nil : (target ?? previousTarget),
 			contentWidth: pinned ? content.width : nil,
 			hiddenTrailingWidth: max(0, content.width - clip.width),
 			surfaceSize: container.frame.size)
+		if let room = titleRooms[id] {
+			presentation.titleLeadingInset = room.leading
+			presentation.titleTrailingInset = room.trailing
+			presentation.titleRowHeight = room.row
+		}
 		guard presentations[id] != presentation else { return }
 		presentations[id] = presentation
 		(container.contentView as? RiftPanePresentationObserving)?.riftPanePresentationDidChange(
@@ -1019,8 +1095,11 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 			}
 			if let scrollView = view as? NSScrollView {
 				for scroller in [scrollView.verticalScroller, scrollView.horizontalScroller]
-					.compactMap({ $0 }) where suppressedScrollers[ObjectIdentifier(scroller)] == nil {
-					suppressedScrollers[ObjectIdentifier(scroller)] = (scroller, scroller.alphaValue)
+					.compactMap({ $0 }) where suppressedScrollers[ObjectIdentifier(scroller)] == nil
+				{
+					suppressedScrollers[ObjectIdentifier(scroller)] = (
+						scroller, scroller.alphaValue
+					)
 					scroller.alphaValue = 0
 				}
 			}
@@ -1041,7 +1120,8 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 	/// window's corners, which take `layoutCornerRadius`.
 	private func borderRadii(for frame: CGRect) -> RiftCornerRadii {
 		let pane = configuration.paneCornerRadius
-		guard configuration.focusBorderFollowsWindowCorners, let outer = configuration.layoutCornerRadius
+		guard configuration.focusBorderFollowsWindowCorners,
+			let outer = configuration.layoutCornerRadius
 		else { return RiftCornerRadii(pane) }
 		// Compare against the window's content area when there is one, else this view.
 		let container: CGRect
@@ -1130,9 +1210,11 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 			) { [weak self] note in
 				let object = (note.object as AnyObject?).map(ObjectIdentifier.init)
 				let widthChange =
-					(note.userInfo?[RiftContainerAnimation.widthChangeKey] as? NSNumber)?.doubleValue
+					(note.userInfo?[RiftContainerAnimation.widthChangeKey] as? NSNumber)?
+					.doubleValue
 				let contentWidth =
-					(note.userInfo?[RiftContainerAnimation.contentWidthKey] as? NSNumber)?.doubleValue
+					(note.userInfo?[RiftContainerAnimation.contentWidthKey] as? NSNumber)?
+					.doubleValue
 				MainActor.assumeIsolated {
 					self?.containerAnimationWillBegin(
 						object: object, widthChange: widthChange, contentWidth: contentWidth)
@@ -1167,7 +1249,9 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 		if let zoomed = zoomedPane {
 			sizes[zoomed] = target
 		} else {
-			for (id, frame) in layout.geometry(in: targetBounds, metrics: effectiveMetrics).paneFrames {
+			for (id, frame) in layout.geometry(in: targetBounds, metrics: effectiveMetrics)
+				.paneFrames
+			{
 				sizes[id] = frame.size
 			}
 		}
@@ -1227,9 +1311,11 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 					window: window, rowHeight: configuration.headerHeight)
 				headless.onLayout = { [weak self] in self?.refreshHeaderChrome() }
 				headlessWindow = headless
-			} else {
-				headlessWindow?.rowHeight = configuration.headerHeight
 			}
+			headlessWindow?.rowHeight = configuration.headerHeight
+			headlessWindow?.titlebarHeight = configuration.titlebarMetrics?.height
+			headlessWindow?.horizontalOffset = configuration.titlebarMetrics?.buttonOffset.x ?? 0
+			headlessWindow?.verticalOffset = configuration.titlebarMetrics?.buttonOffset.y ?? 0
 		} else if let headless = headlessWindow {
 			headlessWindow = nil
 			headless.restore()
@@ -1244,7 +1330,9 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 		let headless = isHeadlessActive
 		var atWindowTop = false
 		var buttons: CGRect?
-		if headless, let window, let contentHeight = window.contentView?.bounds.height {
+		if headless || sidebarChrome != nil, let window,
+			let contentHeight = window.contentView?.bounds.height
+		{
 			atWindowTop = convert(bounds, to: nil).maxY >= contentHeight - 1
 			buttons = headlessWindow?.buttonGroupFrame.map { convert($0, from: nil) }
 		}
@@ -1258,12 +1346,31 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 			container.header.showsGrip = showsGrip
 			// Distance from the pane's left edge to just past the window buttons, if they sit over it.
 			var clearance: CGFloat = 0
-			if touchesTop, let buttons, buttons.maxX > frame.minX, buttons.minX < frame.maxX {
-				let reserved = configuration.windowButtonInset.map { convert(CGPoint(x: $0, y: 0), from: nil).x }
+			var trailingClearance: CGFloat = 0
+			if touchesTop, let chrome = sidebarChrome {
+				// A sidebar says how much room to keep, measured from this layout's edges.
+				if frame.minX <= bounds.minX + 0.5 { clearance = chrome.leadingButtonRoom }
+				if frame.maxX >= bounds.maxX - 0.5 { trailingClearance = chrome.trailingButtonRoom }
+			} else if touchesTop, let buttons, buttons.maxX > frame.minX, buttons.minX < frame.maxX
+			{
+				let reserved =
+					configuration.windowButtonInset.map {
+						convert(CGPoint(x: $0, y: 0), from: nil).x
+					}
 					?? buttons.maxX + configuration.windowButtonSpacing
 				clearance = max(0, reserved - frame.minX)
 			}
 			container.header.leadingInset = max(0, clearance - 6)
+			container.header.trailingInset = trailingClearance
+			// Pane content lays its own title out in the same room, on the window buttons' line.
+			let row = touchesTop ? buttons.map { 2 * ($0.midY - frame.minY) } : nil
+			let room = (leading: clearance, trailing: trailingClearance, row: row)
+			if titleRooms[id].map({ $0 != room }) ?? true {
+				titleRooms[id] = room
+				let current = presentations[id]
+				publishPresentation(
+					for: id, settled: current?.isLayoutSettled ?? true, target: current?.targetSize)
+			}
 			// Invisible strip: the corner after the buttons drags the pane; on the top row of a
 			// headless window, the rest of it drags the window.
 			container.strip.leadingInset = clearance
@@ -1508,7 +1615,8 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 	///   any drag is sent again to the window with this view ignoring the mouse, so the content
 	///   underneath gets the click.
 	func trackPaneDrag(
-		_ pane: PaneID, startingWith event: NSEvent, replayingClicksThrough replayView: RiftPaneDragStripView?
+		_ pane: PaneID, startingWith event: NSEvent,
+		replayingClicksThrough replayView: RiftPaneDragStripView?
 	) {
 		guard let window, paneLayout?.contains(pane) == true else { return }
 		guard configuration.allowsPaneDragging else {
@@ -1613,7 +1721,8 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 			// A child window above this one, so the highlight draws over glass and every view.
 			dropIndicator.isHidden = true
 			dropOverlay.show(
-				rect.map { window.convertToScreen(convert($0, to: nil)) }, above: rect == nil ? nil : window)
+				rect.map { window.convertToScreen(convert($0, to: nil)) },
+				above: rect == nil ? nil : window)
 			return
 		}
 		guard let rect else {
@@ -1715,7 +1824,9 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 		for (id, container) in containers {
 			container.setAccessibilityCustomActions(
 				[RiftDirection.left, .right, .up, .down].compactMap { direction in
-					guard layout.swapNeighbor(of: id, toward: direction, in: bounds, metrics: effectiveMetrics) != nil
+					guard
+						layout.swapNeighbor(
+							of: id, toward: direction, in: bounds, metrics: effectiveMetrics) != nil
 					else { return nil }
 					let name = "Move \(String(describing: direction).capitalized)"
 					return NSAccessibilityCustomAction(name: name) { [weak self] in
@@ -1765,4 +1876,12 @@ struct RiftDropTarget<PaneID: Hashable & Sendable> {
 @MainActor
 final class RiftDragTrackingState<PaneID: Hashable & Sendable> {
 	var session: RiftPaneDragSession<PaneID>?
+}
+
+extension RiftView: RiftSidebarChromeObserving {
+	public func riftSidebarChromeDidChange(_ chrome: RiftSidebarChrome) {
+		guard chrome != sidebarChrome else { return }
+		sidebarChrome = chrome
+		refreshHeaderChrome()
+	}
 }
