@@ -85,6 +85,8 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 	private var glass: RiftGlassController?
 	/// Pane sizes at the target of a running container animation (see RiftContainerAnimation).
 	private var containerAnimationPaneSizes: [PaneID: CGSize]?
+	/// Container animations started with `beginContainerAnimation` and not yet ended.
+	var containerAnimationDepth = 0
 	private var containerAnimationObservers: [NSObjectProtocol] = []
 	/// Held while the pointer is over a pane header, so the system doesn't drag the window there.
 	private var hoverLock: RiftMovementLockToken?
@@ -793,6 +795,7 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 			mouseMonitor = nil
 		}
 		guard window != nil else {
+			containerAnimationDepth = 0
 			RiftViewRegistry.unregister(self)
 			return
 		}

@@ -22,8 +22,14 @@ public enum RiftContainerAnimation {
 
 extension RiftView {
 	/// Announces that this view is about to animate to `targetWidth`. Does nothing outside a window.
+	///
+	/// Calls may overlap, for example when a fold is reversed half-way: each one re-targets the
+	/// panes from the current width, and only the `endContainerAnimation()` matching the last
+	/// outstanding begin posts the end notice. That way an interrupted animation's completion
+	/// handler can't end the one that replaced it.
 	public func beginContainerAnimation(toWidth targetWidth: CGFloat) {
 		guard let window else { return }
+		containerAnimationDepth += 1
 		let current = bounds.width
 		NotificationCenter.default.post(
 			name: RiftContainerAnimation.willBeginNotification,
@@ -37,7 +43,9 @@ extension RiftView {
 
 	/// Announces that the width animation started with `beginContainerAnimation(toWidth:)` is over.
 	public func endContainerAnimation() {
-		guard let window else { return }
+		guard let window, containerAnimationDepth > 0 else { return }
+		containerAnimationDepth -= 1
+		guard containerAnimationDepth == 0 else { return }
 		NotificationCenter.default.post(
 			name: RiftContainerAnimation.didEndNotification, object: window)
 	}
