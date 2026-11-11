@@ -29,6 +29,9 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 
 	/// Creates the content view for a pane the first time it appears.
 	public var makePaneView: (PaneID) -> NSView
+	/// Builds the floating preview shown while a pane is dragged, sized to its fitting size.
+	/// `nil` (or returning `nil`) shows a snapshot of the pane instead.
+	public var makeDragPreview: ((PaneID) -> NSView?)?
 	/// Title shown in the pane header. Defaults to the pane ID's description.
 	public var paneTitle: ((PaneID) -> String)? { didSet { refreshTitles() } }
 
@@ -70,6 +73,18 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 	private var keyObservers: [NSObjectProtocol] = []
 	private var pinch = RiftPinchRecognizer()
 	private var presentations: [PaneID: RiftPanePresentation] = [:]
+	private var presentationObservers: [PaneID: [RiftWeakPresentationObserver]] = [:]
+	/// Panes laid out behind the zoomed pane, drawn at `displayedFadeOpacity`.
+	private var fadedPanes = Set<PaneID>()
+	private var displayedFadeOpacity: Double = 1
+	/// Divider lines as drawn now (rect and opacity), and the opacity of all of them together.
+	private var dividerState: [UUID: (rect: CGRect, opacity: Double)] = [:]
+	private var dividerLineOpacity: Double = 1
+	private var zoomFractions: [PaneID: CGFloat] = [:]
+	/// Panes still growing out of an edge, and how far they have got.
+	private var growthState: [PaneID: (transition: RiftGrowthTransition, progress: Double)] = [:]
+	private let windowSurfaceView = RiftWindowSurfaceView()
+	private lazy var dropOverlay = RiftDropOverlayWindow()
 	private static var borderTrack: AnyHashable { "rift.focusBorder" }
 	private static var layoutTrack: AnyHashable { "rift.layout" }
 
@@ -108,6 +123,9 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 		self.makePaneView = makePaneView
 		super.init(frame: NSRect(x: 0, y: 0, width: 640, height: 400))
 		wantsLayer = true
+		windowSurfaceView.frame = bounds
+		windowSurfaceView.autoresizingMask = [.width, .height]
+		addSubview(windowSurfaceView)
 		dropIndicator.isHidden = true
 		addSubview(dropIndicator)
 		dividerLines.autoresizingMask = [.width, .height]
@@ -254,9 +272,14 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 		let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
 		let id = containers.first(where: { $0.value === container })?.key
 		let focused = id != nil && id == focusedStorage
+		// The inactive fade mode decides what an unfocused pane loses: its surface look, its
+		// content opacity, or both.
+		let fade = configuration.inactivePaneFade
 		if let provider, let surface = container.surfaceView {
 			provider.update(
-				surface, for: RiftPaneSurfaceState(isFocused: focused, isWindowActive: key, isDark: dark))
+				surface,
+				for: RiftPaneSurfaceState(
+					isFocused: focused || !fade.fadesStyling, isWindowActive: key, isDark: dark))
 		}
 		func opacity(_ isFocused: Bool) -> CGFloat? {
 			provider?.contentOpacity(
@@ -265,7 +288,10 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 		container.activeAlpha =
 			opacity(true) ?? (key ? 1 : configuration.inactiveWindowFocusedPaneAlpha)
 		container.inactiveAlpha =
-			opacity(false) ?? (key ? configuration.inactivePaneAlpha : configuration.inactiveWindowPaneAlpha)
+			fade.fadesText
+			? opacity(false)
+				?? (key ? configuration.inactivePaneAlpha : configuration.inactiveWindowPaneAlpha)
+			: container.activeAlpha
 	}
 
 	private func applyFocusBorderStyle() {
@@ -275,11 +301,19 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 		let color = active
 			? base
 			: base.withAlphaComponent(base.alphaComponent * configuration.inactiveWindowFocusBorderOpacity)
+		var gradient: [NSColor]?
+		if configuration.focusBorderUsesGradient {
+			effectiveAppearance.performAsCurrentDrawingAppearance {
+				gradient = color.rift_borderGradient()
+			}
+		}
 		for overlay in [focusOverlay, departingFocusOverlay] {
 			overlay.isEnabled = configuration.showsFocusBorder
 			overlay.color = color
+			overlay.gradientColors = gradient
+			overlay.gradientAngle = configuration.focusBorderGradientAngle
 			overlay.lineWidth = configuration.focusBorderWidth
-			overlay.cornerRadius = configuration.paneCornerRadius
+			overlay.cornerRadii = borderRadii(for: overlay.frame)
 		}
 	}
 
@@ -287,6 +321,9 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 		containers.values.forEach(applyConfiguration(to:))
 		dropIndicator.color = configuration.dropIndicatorColor
 		dropIndicator.cornerRadius = configuration.dropIndicatorCornerRadius
+		dropOverlay.indicator.color = configuration.dropIndicatorColor
+		dropOverlay.indicator.cornerRadius = configuration.dropIndicatorCornerRadius
+		windowSurfaceView.surface = configuration.windowSurface
 		applyFocusBorderStyle()
 		applyWindowFade()
 		updateTrackingArea()
@@ -302,15 +339,19 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 		rebuildAccessibility()
 	}
 
-	/// Geometry for what is on screen: the whole layout, or only the zoomed pane.
-	func displayGeometry() -> RiftGeometry<PaneID> {
+	/// Every pane's frame with the layout tiled, ignoring zoom.
+	func tiledGeometry() -> RiftGeometry<PaneID> {
 		guard let layout = paneLayout else { return RiftGeometry(bounds: bounds) }
+		return layout.geometry(in: bounds, metrics: effectiveMetrics)
+	}
+
+	/// Geometry for what can be hit: the whole layout, or only the zoomed pane.
+	func displayGeometry() -> RiftGeometry<PaneID> {
+		guard paneLayout != nil else { return RiftGeometry(bounds: bounds) }
 		if let zoomed = zoomedPane {
 			return RiftGeometry(bounds: bounds, paneFrames: [zoomed: bounds])
 		}
-		var metrics = configuration.metrics
-		metrics.displayScale = window?.backingScaleFactor ?? metrics.displayScale
-		return layout.geometry(in: bounds, metrics: metrics)
+		return tiledGeometry()
 	}
 
 	private var effectiveMetrics: RiftMetrics {
@@ -325,65 +366,190 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 			&& window != nil
 	}
 
+	/// Divider lines as drawn: rect and opacity per split.
+	private func targetDividerLines(_ geometry: RiftGeometry<PaneID>) -> [UUID: CGRect] {
+		guard configuration.showsDividerLines else { return [:] }
+		return Dictionary(
+			geometry.dividers.map { ($0.splitID, $0.drawnLine) }, uniquingKeysWith: { a, _ in a })
+	}
+
+	/// Moves every pane to where the layout puts it, animating with a motion plan: frames move on
+	/// the pane curve; new panes pop in or grow out of their edge; panes behind a zoomed pane fade
+	/// (`visibility`); divider lines fade in and out one by one; zoom fractions animate.
 	private func placeContainers(
-		animated: Bool, added: Set<PaneID>, curve curveOverride: RiftMotionCurve? = nil
+		animated: Bool, added: Set<PaneID>, curve curveOverride: RiftMotionCurve? = nil,
+		visibility: RiftVisibilityFade.Direction? = nil, elevate: PaneID? = nil
 	) {
-		let geometry = displayGeometry()
+		let tiled = tiledGeometry()
+		var endFrames = tiled.paneFrames
+		if let zoomed = zoomedPane { endFrames[zoomed] = bounds }
+		let endFaded: Set<PaneID> =
+			zoomedPane.map { Set(endFrames.keys).subtracting([$0]) } ?? []
+		let endDividers = targetDividerLines(tiled)
+		let endLineOpacity: Double = zoomedPane == nil ? 1 : 0
+		let endZoom: [PaneID: CGFloat] = zoomedPane.map { [$0: 1] } ?? [:]
 		let animate = animated && shouldAnimate
-		var moves: [(id: PaneID, container: RiftPaneContainerView, from: CGRect, to: CGRect)] = []
-		var popping: [RiftPaneContainerView] = []
 		// A new layout replaces any running layout motion, which continues from where it is now.
 		motion.cancel(Self.layoutTrack, finishing: false)
 		for (id, container) in containers {
-			guard let frame = geometry.paneFrames[id] else {
+			guard endFrames[id] != nil else {
 				container.isHidden = true
 				continue
 			}
 			container.isHidden = false
-			if animate, added.contains(id) {
-				// New panes pop in where they land.
-				container.frame = frame
-				popping.append(container)
-			}
-			container.alphaValue = draggingPane.flatMap { containers[$0] } === container ? 0.35 : 1
-			moves.append((id, container, container.frame, frame))
+			container.dragAlpha = draggingPane == id ? 0.35 : 1
 		}
-		refreshHeaderChrome(geometry.paneFrames)
+		if let elevate, let container = containers[elevate] {
+			addSubview(container, positioned: .below, relativeTo: departingFocusOverlay)
+		}
+		refreshHeaderChrome(endFrames)
 		refreshMovementLock()
-		refreshDividerLines()
 		guard animate, let curve = curveOverride ?? configuration.animationStyle.paneCurve else {
-			for move in moves {
-				move.container.frame = move.to
-				if runningLayoutAnimations == 0 { publishPresentation(for: move.id, settled: true) }
+			growthState = [:]
+			for (id, container) in containers {
+				guard let frame = endFrames[id] else { continue }
+				container.frame = frame
+				container.motionAlpha = endFaded.contains(id) ? 0 : 1
+				container.isHidden = endFaded.contains(id)
+				container.motionPinnedSize = nil
+			}
+			fadedPanes = endFaded
+			displayedFadeOpacity = endFaded.isEmpty ? 1 : 0
+			dividerState = endDividers.mapValues { ($0, 1) }
+			dividerLineOpacity = endLineOpacity
+			renderDividerLines()
+			zoomFractions = endZoom
+			if runningLayoutAnimations == 0 {
+				for id in containers.keys { publishPresentation(for: id, settled: true) }
 			}
 			syncFocusBorderFrame()
 			return
 		}
-		popping.forEach(popIn)
-		for move in moves {
-			publishPresentation(
-				for: move.id, settled: false, target: contentSize(forPaneFrame: move.to))
+
+		// The plan.
+		var startFrames: [PaneID: CGRect] = [:]
+		var growth: [PaneID: RiftGrowthTransition] = [:]
+		let usesGrowth = configuration.paneTransition == .edgeGrowth
+		for (id, container) in containers {
+			guard let end = endFrames[id] else { continue }
+			if added.contains(id) {
+				if usesGrowth, let layout = paneLayout {
+					growth[id] = .inserting(end, from: layout.growthEdge(of: id) ?? .right)
+				}
+				container.frame = end
+				startFrames[id] = end
+			} else if let running = growthState[id] {
+				// A pane still growing keeps growing from where it is.
+				let (t, p) = (running.transition, running.progress)
+				growth[id] = RiftGrowthTransition(
+					edge: t.edge, startRawFrame: t.rawFrame(progress: p), endRawFrame: end,
+					fullExtent: end.rift_extent(along: t.edge),
+					startOpacity: t.opacity(progress: p, direction: .insertion),
+					startSpatialOpacity: t.spatialOpacity(progress: p))
+				startFrames[id] = container.frame
+			} else {
+				startFrames[id] = container.frame
+			}
 		}
+		if !usesGrowth { containers.filter { added.contains($0.key) }.forEach { popIn($0.value) } }
+		let fadeTargets = endFaded.union(fadedPanes)
+		let fade = visibility.map {
+			RiftVisibilityFade(direction: $0, startOpacity: displayedFadeOpacity)
+		}
+		let startDividers = dividerState
+		let startLineOpacity = dividerLineOpacity
+		let startZoom = zoomFractions
+		let zoomChanging = Set(startZoom.keys).union(endZoom.keys).filter {
+			startZoom[$0] ?? 0 != endZoom[$0] ?? 0
+		}
+		// Content sizing: hold content at the larger of its start and end size.
+		for (id, container) in containers {
+			guard let start = startFrames[id], let end = endFrames[id] else { continue }
+			let pins =
+				configuration.paneContentSizing == .pinnedDuringMotion
+				|| (configuration.pinsContentDuringZoom && zoomChanging.contains(id))
+			container.motionPinnedSize =
+				pins && start != end
+				? CGSize(width: max(start.width, end.width), height: max(start.height, end.height))
+				: nil
+		}
+		for id in containers.keys where endFrames[id] != nil {
+			publishPresentation(
+				for: id, settled: false, target: contentSize(forPaneFrame: endFrames[id]!))
+		}
+
 		let timing = RiftMotionTiming(duration: curve.transitionDuration, curve: curve)
-		let changed = moves.filter { $0.from != $0.to }
 		runningLayoutAnimations += 1
 		structuralActivity.insert(.structuralTransition)
+		let ids = Array(startFrames.keys)
 		motion.run(
 			Self.layoutTrack, duration: timing.duration,
 			apply: { [weak self] elapsed in
 				guard let self else { return }
-				let progress = timing.progress(elapsed: elapsed)
-				var frames: [PaneID: CGRect] = [:]
-				for move in moves { frames[move.id] = move.to }
-				for move in changed {
-					let frame = move.from.rift_interpolated(to: move.to, progress: progress)
-					move.container.frame = frame
-					frames[move.id] = frame
+				let p = timing.progress(elapsed: elapsed)
+				let fadeOpacity = fade.map { $0.opacity(progress: p) }
+				if let fadeOpacity { self.displayedFadeOpacity = fadeOpacity }
+				var growing: [PaneID: (RiftGrowthTransition, Double)] = [:]
+				for id in ids {
+					guard let container = self.containers[id], let start = startFrames[id],
+						let end = endFrames[id]
+					else { continue }
+					var alpha: Double = 1
+					if let g = growth[id] {
+						container.frame = g.displayFrame(progress: p)
+						alpha = g.opacity(progress: p, direction: .insertion)
+						growing[id] = (g, p)
+					} else {
+						container.frame = start.rift_interpolated(to: end, progress: p)
+					}
+					if fadeTargets.contains(id) {
+						alpha *= fadeOpacity ?? (endFaded.contains(id) ? 0 : 1)
+					}
+					container.motionAlpha = CGFloat(alpha)
 				}
+				self.growthState = growing.mapValues { (transition: $0.0, progress: $0.1) }
+				// Divider lines: rects follow the panes, opacities cross-fade one by one.
+				let opacities = riftDividerOpacities(
+					from: startDividers.mapValues(\.opacity), to: endDividers.mapValues { _ in 1 },
+					progress: p)
+				var lines: [UUID: (rect: CGRect, opacity: Double)] = [:]
+				for (id, opacity) in opacities {
+					let rect: CGRect
+					switch (startDividers[id]?.rect, endDividers[id]) {
+					case (let a?, let b?): rect = a.rift_interpolated(to: b, progress: p)
+					case (let a?, nil): rect = a
+					case (nil, let b?): rect = b
+					default: continue
+					}
+					lines[id] = (rect, opacity)
+				}
+				self.dividerState = lines
+				self.dividerLineOpacity =
+					fadeOpacity ?? (startLineOpacity + (endLineOpacity - startLineOpacity) * p)
+				self.renderDividerLines()
+				// Zoom fractions.
+				var zooms: [PaneID: CGFloat] = [:]
+				for id in zoomChanging {
+					let a = startZoom[id] ?? 0, b = endZoom[id] ?? 0
+					zooms[id] = a + (b - a) * CGFloat(min(max(p, 0), 1))
+				}
+				self.zoomFractions = endZoom.merging(zooms) { _, new in new }.filter { $0.value > 0 }
+				for id in zoomChanging { self.publishPresentation(for: id, settled: false) }
 				self.syncFocusBorderFrame()
 			},
 			completion: { [weak self] in
 				guard let self else { return }
+				self.growthState = [:]
+				self.fadedPanes = endFaded
+				self.displayedFadeOpacity = endFaded.isEmpty ? 1 : 0
+				for (id, container) in self.containers where endFaded.contains(id) {
+					container.isHidden = true
+				}
+				for container in self.containers.values { container.motionPinnedSize = nil }
+				self.dividerState = endDividers.mapValues { ($0, 1) }
+				self.dividerLineOpacity = endLineOpacity
+				self.renderDividerLines()
+				self.zoomFractions = endZoom
 				// The layout has settled once the last running motion ends.
 				if self.runningLayoutAnimations == 1 {
 					for id in self.containers.keys { self.publishPresentation(for: id, settled: true) }
@@ -403,19 +569,19 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 	/// Scales a new pane up from the pop-in scale while it fades in.
 	private func popIn(_ container: RiftPaneContainerView) {
 		guard let pop = configuration.panePopIn else { return }
+		let state = RiftPopState(direction: .entering)
 		container.wantsLayer = true
-		container.alphaValue = 0
+		container.popAlpha = 0
 		motion.run(
-			ObjectIdentifier(container), duration: max(pop.entry.duration, pop.fadeIn.duration),
+			ObjectIdentifier(container), duration: state.duration(style: pop),
 			apply: { [weak container] elapsed in
 				guard let container else { return }
-				let grow = pop.entry.progress(elapsed: elapsed)
-				container.rift_setPresentationScale(CGFloat(pop.scale + (1 - pop.scale) * grow))
-				container.alphaValue = CGFloat(min(max(pop.fadeIn.progress(elapsed: elapsed), 0), 1))
+				container.rift_setPresentationScale(CGFloat(state.scale(elapsed: elapsed, style: pop)))
+				container.popAlpha = CGFloat(state.opacity(elapsed: elapsed, style: pop))
 			},
 			completion: { [weak container] in
 				container?.rift_setPresentationScale(1)
-				container?.alphaValue = 1
+				container?.popAlpha = 1
 			})
 	}
 
@@ -426,13 +592,21 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 		window?.invalidateCursorRects(for: self)
 	}
 
+	/// Redraws the divider lines at their target places, unless a layout motion is drawing them.
 	func refreshDividerLines() {
+		guard !motion.isRunning(Self.layoutTrack) else { return renderDividerLines() }
+		dividerState = targetDividerLines(tiledGeometry()).mapValues { ($0, 1) }
+		dividerLineOpacity = zoomedPane == nil ? 1 : 0
+		renderDividerLines()
+	}
+
+	private func renderDividerLines() {
 		dividerLines.frame = bounds
-		let rects =
-			configuration.showsDividerLines && zoomedPane == nil
-			? displayGeometry().dividers.map { dividerLines.convert($0.line, from: self) } : []
+		let lines = dividerState.values.map {
+			(rect: dividerLines.convert($0.rect, from: self), opacity: CGFloat($0.opacity * dividerLineOpacity))
+		}
 		dividerLines.show(
-			rects, color: configuration.dividerColor, blendMode: configuration.dividerBlendMode)
+			lines, color: configuration.dividerColor, blendMode: configuration.dividerBlendMode)
 	}
 
 	// MARK: Commands
@@ -477,7 +651,9 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 			let removal = layout.removing(.pane(id))
 		else { return false }
 		let wasFocused = focusedStorage == id
-		if let container = containers.removeValue(forKey: id) { fadeOutAndRemove(container) }
+		if let container = containers.removeValue(forKey: id) {
+			animateOut(container, edge: layout.growthEdge(of: id))
+		}
 		if wasFocused { focusedStorage = removal.preferredFocus }
 		commit(removal.remaining, reason: .close, animated: true)
 		if wasFocused { setFocus(removal.preferredFocus, notify: true, makeFirstResponder: true) }
@@ -485,25 +661,46 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 		return true
 	}
 
-	/// Shrinks a closed pane to the pop-in scale while it fades out, then removes it.
-	private func fadeOutAndRemove(_ container: RiftPaneContainerView) {
-		guard shouldAnimate, let pop = configuration.panePopIn else {
+	/// Animates a removed pane out, then removes it: it shrinks to the pop-in scale while fading,
+	/// or shrinks into the edge it was split from (`edge`) with edge growth.
+	private func animateOut(_ container: RiftPaneContainerView, edge: RiftEdge?) {
+		guard shouldAnimate, let style = configuration.paneTransitionStyle else {
 			container.removeFromSuperview()
 			return
 		}
 		container.wantsLayer = true
-		motion.run(
-			ObjectIdentifier(container), duration: max(pop.exit.duration, pop.fadeOut.duration),
-			apply: { [weak container] elapsed in
-				guard let container else { return }
-				let shrink = pop.exit.progress(elapsed: elapsed)
-				container.rift_setPresentationScale(CGFloat(1 - (1 - pop.scale) * shrink))
-				container.alphaValue = CGFloat(1 - min(max(pop.fadeOut.progress(elapsed: elapsed), 0), 1))
-			},
-			completion: { [weak container] in
-				container?.removeFromSuperview()
-				container?.rift_setPresentationScale(1)
-			})
+		switch style {
+		case .popIn(let pop):
+			let state = RiftPopState(direction: .leaving)
+			motion.run(
+				ObjectIdentifier(container), duration: state.duration(style: pop),
+				apply: { [weak container] elapsed in
+					guard let container else { return }
+					container.rift_setPresentationScale(
+						CGFloat(state.scale(elapsed: elapsed, style: pop)))
+					container.popAlpha = CGFloat(state.opacity(elapsed: elapsed, style: pop))
+				},
+				completion: { [weak container] in
+					container?.removeFromSuperview()
+					container?.rift_setPresentationScale(1)
+				})
+		case .edgeGrowth:
+			guard let curve = configuration.animationStyle.paneCurve else {
+				container.removeFromSuperview()
+				return
+			}
+			let transition = RiftGrowthTransition.removing(container.frame, into: edge ?? .right)
+			let timing = RiftMotionTiming(duration: curve.transitionDuration, curve: curve)
+			motion.run(
+				ObjectIdentifier(container), duration: timing.duration,
+				apply: { [weak container] elapsed in
+					guard let container else { return }
+					let p = timing.progress(elapsed: elapsed)
+					container.frame = transition.displayFrame(progress: p)
+					container.popAlpha = CGFloat(transition.opacity(progress: p, direction: .removal))
+				},
+				completion: { [weak container] in container?.removeFromSuperview() })
+		}
 	}
 
 	/// Focuses a pane, making its content first responder.
@@ -569,7 +766,9 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 		else { return false }
 		let closed = layout.paneIDs.filter { $0 != keep }
 		for id in closed {
-			if let container = containers.removeValue(forKey: id) { fadeOutAndRemove(container) }
+			if let container = containers.removeValue(forKey: id) {
+				animateOut(container, edge: layout.growthEdge(of: id))
+			}
 		}
 		setZoom(nil)
 		commit(.pane(keep), reason: .close, animated: true)
@@ -595,9 +794,13 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 	public func setZoom(_ pane: PaneID?) {
 		let target = pane.flatMap { paneLayout?.contains($0) == true ? $0 : nil }
 		guard target != zoomedPane else { return }
+		let previous = zoomedPane
 		zoomedPane = target
 		if let target { setFocus(target, notify: true, makeFirstResponder: true) }
-		placeContainers(animated: true, added: [], curve: configuration.animationStyle.chromeCurve)
+		// The zooming pane is drawn above the others; they stay laid out behind it and fade.
+		placeContainers(
+			animated: true, added: [], curve: configuration.animationStyle.chromeCurve,
+			visibility: target != nil ? .hiding : .revealing, elevate: target ?? previous)
 		rebuildAccessibility()
 		window?.invalidateCursorRects(for: self)
 		needsDisplay = true
@@ -678,6 +881,7 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 
 	/// Moves the focus border to the focused pane, gliding or crossfading when it changes pane.
 	private func updateFocusBorder(animated: Bool) {
+		defer { updateBorderShape() }
 		guard configuration.showsFocusBorder, let pane = focusedStorage,
 			let target = containers[pane], !target.isHidden
 		else {
@@ -713,6 +917,7 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 					guard let self, let target else { return }
 					self.focusOverlay.frame = start.rift_interpolated(
 						to: target.frame, progress: timing.progress(elapsed: elapsed))
+					self.updateBorderShape()
 				},
 				completion: { [weak self] in self?.borderGlides = false })
 		case .crossfade:
@@ -742,22 +947,49 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 		return CGSize(width: frame.width, height: max(0, frame.height - top))
 	}
 
-	/// Tells content that adopts `RiftPanePresentationObserving` about a change, if there is one.
+	/// Also tells `observer` about `pane`'s presentation changes (held weakly).
+	public func addPresentationObserver(_ observer: RiftPanePresentationObserving, for pane: PaneID) {
+		var list = presentationObservers[pane, default: []].filter { $0.observer != nil }
+		guard !list.contains(where: { $0.observer === observer }) else { return }
+		list.append(RiftWeakPresentationObserver(observer))
+		presentationObservers[pane] = list
+		if let presentation = presentations[pane] { observer.riftPanePresentationDidChange(presentation) }
+	}
+
+	public func removePresentationObserver(_ observer: RiftPanePresentationObserving, for pane: PaneID) {
+		presentationObservers[pane]?.removeAll { $0.observer == nil || $0.observer === observer }
+	}
+
+	/// The presentation of a pane right now.
+	public func presentation(of pane: PaneID) -> RiftPanePresentation? { presentations[pane] }
+
+	/// Tells the pane's content (if it adopts `RiftPanePresentationObserving`) and the registered
+	/// observers about a change, if there is one.
 	private func publishPresentation(for id: PaneID, settled: Bool, target: CGSize? = nil) {
-		guard let container = containers[id],
-			let observer = container.contentView as? RiftPanePresentationObserving
-		else { return }
+		guard let container = containers[id] else { return }
+		let content = container.contentView.frame.size
+		let clip = container.contentClip.bounds.size
+		let pinned = container.pinnedPaneSize != nil
+		let previousTarget = presentations[id].flatMap { $0.isLayoutSettled ? nil : $0.targetSize }
 		let presentation = RiftPanePresentation(
-			isLayoutSettled: settled, zoomFraction: zoomedPane == id ? 1 : 0,
-			contentSize: container.contentView.bounds.size, targetSize: settled ? nil : target)
+			isLayoutSettled: settled, zoomFraction: zoomFractions[id] ?? 0, contentSize: content,
+			targetSize: settled ? nil : (target ?? previousTarget),
+			contentWidth: pinned ? content.width : nil,
+			hiddenTrailingWidth: max(0, content.width - clip.width),
+			surfaceSize: container.frame.size)
 		guard presentations[id] != presentation else { return }
 		presentations[id] = presentation
-		observer.riftPanePresentationDidChange(presentation)
+		(container.contentView as? RiftPanePresentationObserving)?.riftPanePresentationDidChange(
+			presentation)
+		for box in presentationObservers[id] ?? [] {
+			box.observer?.riftPanePresentationDidChange(presentation)
+		}
 	}
 
 	/// Surfaces and content alpha for the focus, window key state and appearance.
 	private func applyWindowFade() {
 		containers.values.forEach(applySurface(to:))
+		windowSurfaceView.isWindowActive = window?.isKeyWindow ?? true
 	}
 
 	open override func viewDidChangeEffectiveAppearance() {
@@ -765,32 +997,89 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 		applyWindowFade()
 	}
 
-	/// Hides (or restores) the scrollers of scroll views inside the panes.
+	/// Hides (or restores) the scrollers inside the panes while anything reshapes them. Views that
+	/// adopt `RiftScrollerSuppressing` hide their own; other scroll views' `NSScroller`s are faded.
 	private var suppressedScrollers: [ObjectIdentifier: (NSScroller, CGFloat)] = [:]
+	private var suppressingViews: [ObjectIdentifier: RiftScrollerSuppressing] = [:]
 	private func updateScrollerSuppression() {
 		if structuralActivity.isEmpty || !configuration.hidesScrollersDuringStructuralChanges {
 			for (scroller, alpha) in suppressedScrollers.values { scroller.alphaValue = alpha }
 			suppressedScrollers.removeAll()
+			for view in suppressingViews.values { view.riftSetScrollersSuppressed(false) }
+			suppressingViews.removeAll()
 			return
 		}
 		func visit(_ view: NSView) {
+			if let adopter = view as? RiftScrollerSuppressing {
+				if suppressingViews[ObjectIdentifier(view)] == nil {
+					suppressingViews[ObjectIdentifier(view)] = adopter
+					adopter.riftSetScrollersSuppressed(true)
+				}
+				return
+			}
 			if let scrollView = view as? NSScrollView {
 				for scroller in [scrollView.verticalScroller, scrollView.horizontalScroller]
-				.compactMap({ $0 }) where suppressedScrollers[ObjectIdentifier(scroller)] == nil {
+					.compactMap({ $0 }) where suppressedScrollers[ObjectIdentifier(scroller)] == nil {
 					suppressedScrollers[ObjectIdentifier(scroller)] = (scroller, scroller.alphaValue)
 					scroller.alphaValue = 0
 				}
 			}
 			view.subviews.forEach(visit)
 		}
-		containers.values.forEach { visit($0) }
+		containers.values.forEach { visit($0.contentView) }
 	}
 
 	/// Keeps the focus border on the focused pane while panes move (a glide tracks it itself).
 	private func syncFocusBorderFrame() {
+		defer { updateBorderShape() }
 		guard !borderGlides, let pane = borderPane, let target = containers[pane] else { return }
 		focusOverlay.frame = target.frame
 		if target.isHidden { updateFocusBorder(animated: false) }
+	}
+
+	/// Per-corner radii for a border at `frame`: the pane radius, except corners that meet the
+	/// window's corners, which take `layoutCornerRadius`.
+	private func borderRadii(for frame: CGRect) -> RiftCornerRadii {
+		let pane = configuration.paneCornerRadius
+		guard configuration.focusBorderFollowsWindowCorners, let outer = configuration.layoutCornerRadius
+		else { return RiftCornerRadii(pane) }
+		// Compare against the window's content area when there is one, else this view.
+		let container: CGRect
+		let rect: CGRect
+		if let content = window?.contentView {
+			container = content.bounds
+			rect = content.convert(frame, from: self)
+		} else {
+			container = bounds
+			rect = frame
+		}
+		let tolerance: CGFloat = 0.5
+		let left = abs(rect.minX - container.minX) < tolerance
+		let right = abs(rect.maxX - container.maxX) < tolerance
+		let flipped = window?.contentView?.isFlipped ?? isFlipped
+		let atMinY = abs(rect.minY - container.minY) < tolerance
+		let atMaxY = abs(rect.maxY - container.maxY) < tolerance
+		let top = flipped ? atMinY : atMaxY
+		let bottom = flipped ? atMaxY : atMinY
+		return RiftCornerRadii(
+			topLeft: left && top ? outer : pane, topRight: right && top ? outer : pane,
+			bottomLeft: left && bottom ? outer : pane, bottomRight: right && bottom ? outer : pane)
+	}
+
+	/// Corner radii of the border and the divider cover follow the border's frame.
+	private func updateBorderShape() {
+		focusOverlay.cornerRadii = borderRadii(for: focusOverlay.frame)
+		departingFocusOverlay.cornerRadii = borderRadii(for: departingFocusOverlay.frame)
+		let covers =
+			configuration.focusBorderCoversDividers && configuration.showsFocusBorder
+			&& !focusOverlay.isHidden
+		// Lines are centred on the pane edge, so the cover reaches half a line past the frame.
+		let metrics = configuration.metrics
+		let half = (metrics.lineThickness ?? metrics.dividerThickness) / 2
+		let rect = focusOverlay.frame.insetBy(dx: -half, dy: -half)
+		dividerLines.cover(
+			covers ? dividerLines.convert(rect, from: self) : nil,
+			radii: focusOverlay.cornerRadii, inset: configuration.focusBorderWidth + half)
 	}
 
 	open override func viewDidMoveToWindow() {
@@ -888,18 +1177,18 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 		// ever grows the held size.
 		for (id, container) in containers {
 			guard let target = sizes[id] else { continue }
-			let current = container.pinnedPaneSize ?? container.bounds.size
+			let current = container.containerPinnedSize ?? container.bounds.size
 			sizes[id] = CGSize(
 				width: max(target.width, current.width), height: max(target.height, current.height))
 		}
 		containerAnimationPaneSizes = sizes
-		for (id, container) in containers { container.pinnedPaneSize = sizes[id] }
+		for (id, container) in containers { container.containerPinnedSize = sizes[id] }
 	}
 
 	private func containerAnimationDidEnd(object: ObjectIdentifier?) {
 		guard isOwnWindow(object), containerAnimationPaneSizes != nil else { return }
 		containerAnimationPaneSizes = nil
-		for container in containers.values { container.pinnedPaneSize = nil }
+		for container in containers.values { container.containerPinnedSize = nil }
 		placeContainers(animated: false, added: [])
 	}
 
@@ -1320,6 +1609,13 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 	}
 
 	func showDropIndicator(_ rect: CGRect?) {
+		if configuration.dropIndicatorUsesChildWindow, let window {
+			// A child window above this one, so the highlight draws over glass and every view.
+			dropIndicator.isHidden = true
+			dropOverlay.show(
+				rect.map { window.convertToScreen(convert($0, to: nil)) }, above: rect == nil ? nil : window)
+			return
+		}
 		guard let rect else {
 			dropIndicator.isHidden = true
 			return
@@ -1331,9 +1627,9 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 	}
 
 	func setDragging(_ pane: PaneID?) {
-		if let previous = draggingPane { containers[previous]?.alphaValue = 1 }
+		if let previous = draggingPane { containers[previous]?.dragAlpha = 1 }
 		draggingPane = pane
-		if let pane { containers[pane]?.alphaValue = 0.35 }
+		if let pane { containers[pane]?.dragAlpha = 0.35 }
 		if pane != nil {
 			structuralActivity.insert(.paneDrag)
 		} else {

@@ -3,8 +3,12 @@ import Foundation
 
 /// Sizes that control how a layout is turned into frames.
 public struct RiftMetrics: Equatable, Sendable {
-	/// Visible thickness of a divider line, in points. Panes are separated by exactly this much.
+	/// Space between panes at a divider, in points.
 	public var dividerThickness: CGFloat
+	/// Thickness of the drawn divider line, centred in the space between panes. When it is larger
+	/// than `dividerThickness` the line overlaps the pane edges (for example a 1pt line between
+	/// touching panes). `nil` draws the line exactly as thick as the space.
+	public var lineThickness: CGFloat?
 	/// The smallest size a pane may be squeezed to by a divider.
 	public var minimumPaneSize: CGSize
 	/// Width of the invisible area around a divider that responds to the mouse.
@@ -14,11 +18,13 @@ public struct RiftMetrics: Equatable, Sendable {
 
 	public init(
 		dividerThickness: CGFloat = 1,
+		lineThickness: CGFloat? = nil,
 		minimumPaneSize: CGSize = CGSize(width: 160, height: 120),
 		dividerHitThickness: CGFloat = 16,
 		displayScale: CGFloat = 2
 	) {
 		self.dividerThickness = dividerThickness
+		self.lineThickness = lineThickness
 		self.minimumPaneSize = minimumPaneSize
 		self.dividerHitThickness = dividerHitThickness
 		self.displayScale = displayScale
@@ -33,8 +39,18 @@ public struct RiftDividerPlacement: Equatable, Sendable {
 	public var position: Double
 	/// The whole area of the split (both children plus the divider).
 	public var container: CGRect
-	/// The visible divider line.
+	/// The space between the two children (zero thick when they touch).
 	public var line: CGRect
+	/// The drawn line: `lineThickness` thick, centred on `line`.
+	public var drawnLine: CGRect {
+		let t = lineThickness ?? (axis == .horizontal ? line.width : line.height)
+		switch axis {
+		case .horizontal: return CGRect(x: line.midX - t / 2, y: line.minY, width: t, height: line.height)
+		case .vertical: return CGRect(x: line.minX, y: line.midY - t / 2, width: line.width, height: t)
+		}
+	}
+	/// Thickness of the drawn line, if it differs from the space between the children.
+	public var lineThickness: CGFloat? = nil
 	/// Length given to the first child after clamping.
 	public var leadingLength: CGFloat
 	/// Container length along the axis minus the divider thickness.
@@ -154,6 +170,7 @@ extension RiftLayout {
 					position: split.position,
 					container: rect,
 					line: line,
+					lineThickness: metrics.lineThickness,
 					leadingLength: lead,
 					available: available,
 					minLeading: minLeading,

@@ -143,6 +143,18 @@ extension RiftLayout {
 	}
 }
 
+extension RiftLayout {
+	/// The outer edge of `pane` within its parent split: the side it grows out of when it is
+	/// inserted, and shrinks into when it is removed. `nil` for a lone pane or an absent one.
+	public func growthEdge(of pane: PaneID) -> RiftEdge? {
+		guard let step = path(to: pane)?.last else { return nil }
+		switch step.split.axis {
+		case .horizontal: return step.inFirst ? .left : .right
+		case .vertical: return step.inFirst ? .top : .bottom
+		}
+	}
+}
+
 // MARK: - Structural edits
 
 extension RiftLayout {

@@ -191,25 +191,50 @@ public struct RiftPanePresentation: Equatable, Sendable {
 	/// `false` while the layout is moving; content such as a terminal can wait for `true` before
 	/// reporting its new size.
 	public var isLayoutSettled: Bool
-	/// 1 while this pane is zoomed, otherwise 0.
+	/// How zoomed the pane is: 0 tiled, 1 filling the layout, in between while the zoom animates.
 	public var zoomFraction: CGFloat
 	/// The content's current size.
 	public var contentSize: CGSize
 	/// While the layout moves, the size the content will end at.
 	public var targetSize: CGSize?
+	/// The content's width when it differs from its pane's (content held at a pinned size).
+	public var contentWidth: CGFloat?
+	/// How much of the content is cut off past the pane's trailing edge (0 when it fits).
+	public var hiddenTrailingWidth: CGFloat
+	/// The size of the pane's surface (its frame).
+	public var surfaceSize: CGSize?
 
 	public init(
-		isLayoutSettled: Bool, zoomFraction: CGFloat, contentSize: CGSize, targetSize: CGSize?
+		isLayoutSettled: Bool, zoomFraction: CGFloat, contentSize: CGSize, targetSize: CGSize?,
+		contentWidth: CGFloat? = nil, hiddenTrailingWidth: CGFloat = 0, surfaceSize: CGSize? = nil
 	) {
 		self.isLayoutSettled = isLayoutSettled
 		self.zoomFraction = zoomFraction
 		self.contentSize = contentSize
 		self.targetSize = targetSize
+		self.contentWidth = contentWidth
+		self.hiddenTrailingWidth = hiddenTrailingWidth
+		self.surfaceSize = surfaceSize
 	}
 }
 
-/// Adopt in a pane's content view to hear about presentation changes.
+/// Adopt to hear about a pane's presentation changes: in the pane's content view (it is told
+/// automatically), or in any object registered with `RiftView.addPresentationObserver(_:for:)`.
 @MainActor
 public protocol RiftPanePresentationObserving: AnyObject {
 	func riftPanePresentationDidChange(_ presentation: RiftPanePresentation)
+}
+
+/// Adopt in a view inside a pane to hide its own scrollers while the layout reshapes (Rift calls
+/// it when `structuralActivity` becomes non-empty, and again 0.15s after it empties). Rift then
+/// leaves that view's `NSScroller`s alone.
+@MainActor
+public protocol RiftScrollerSuppressing: AnyObject {
+	func riftSetScrollersSuppressed(_ suppressed: Bool)
+}
+
+@MainActor
+final class RiftWeakPresentationObserver {
+	weak var observer: RiftPanePresentationObserving?
+	init(_ observer: RiftPanePresentationObserving) { self.observer = observer }
 }

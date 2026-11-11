@@ -19,20 +19,26 @@ A split-pane layout component for macOS. Use it from SwiftUI with `RiftLayoutVie
     - Set `showsPaneHeaders = true` for header bars with a title and close button instead.
 - **Pane drag and drop:** drag a pane by its corner handle (or by its header, with header bars).
     - The drop zone is left, right, top or bottom when the pointer is in an edge band. Each band is 80pt wide, clamped to between ¼ and ⅓ of the pane. Elsewhere the zone is the centre, and dropping there swaps the two panes.
-    - A translucent accent-coloured indicator shows where the pane will land.
-    - A floating snapshot of the pane follows the pointer. Escape cancels the drag.
+    - A translucent accent-coloured indicator shows where the pane will land. It is drawn in a child window above the layout's window (`dropIndicatorUsesChildWindow`), so it shows over glass and every view.
+    - A floating preview follows the pointer: your own view (`makeDragPreview`, or `dragPreview:` in SwiftUI), sized to fit, or else a snapshot of the pane. Escape cancels the drag.
     - Panes can also be dragged into another `RiftView` that has the same `groupIdentifier`.
     - Releasing outside every window tears the pane out (`onTearOut`).
 - **Commands:**
     - Split, close (focus moves to the neighbouring pane), and focus by direction (wrapping at the edges).
     - Resize toward a direction and swap with a neighbour.
     - Balance panes evenly, optionally keeping dividers the user dragged, plus an auto-balance mode.
-    - Zoom one pane to fill the view.
+    - Zoom one pane to fill the view. The zoom animates on the chrome curve with the pane drawn above the others, which stay laid out behind it: they fade out over the first half of the zoom and, when it is undone, fade back in over the second half (smoothstep). Divider lines fade with them.
 - **Focus:**
     - Clicking anywhere in a pane focuses it.
     - Optional: focus follows the mouse.
-    - Accent focus border.
-    - Optional fading of unfocused panes.
+    - Accent focus border, 2pt, stroked with a gradient (the colour mixed 10% toward white, the colour, and 10% toward black, in OKLab) at 135°. Corners that meet the window's corners take `layoutCornerRadius`, and divider lines under the border are hidden (`focusBorderCoversDividers`).
+    - Unfocused panes can lose their surface look, their content opacity, or both (`inactivePaneFade`).
+- **Motion:** every animated layout change is one plan, sampled each frame:
+    - Panes move on the pane curve (a spring that settles in its own time).
+    - New panes pop in (from 87% size while fading in) or, with `paneTransition = .edgeGrowth`, grow out of the edge they were split from. A growing pane is never drawn shorter than 32pt, and its opacity follows a smoothstep of how much of it has grown past those 32pt. Closed panes do the reverse.
+    - Each divider line fades on its own: new lines fade in, removed lines fade out.
+    - A change that interrupts another starts from where the panes are now, and a pane still growing keeps growing from its current size and opacity.
+    - `paneContentSizing = .pinnedDuringMotion` holds content at the larger of its start and end size until the motion ends.
 - **Headless windows:** set `configuration.windowStyle = .headless`.
     - The titlebar and title are hidden, and content runs edge to edge.
     - The real close, minimise and zoom buttons stay, centred in the top row of pane headers. Rift sets the window's titlebar height (`customTitlebarHeight` on the frame view) and the button group offset (`standardWindowButtonGroupOffset`), so AppKit lays the buttons out itself. These are private AppKit settings: Rift checks that the window responds to them first and, where it doesn't, resizes the titlebar container with public `NSView` calls instead.
@@ -46,9 +52,10 @@ A split-pane layout component for macOS. Use it from SwiftUI with `RiftLayoutVie
   - Pane content listens through `RiftContainerAnimationObserver` and either freezes until the end (`.holdContent`) or resizes once, straight to its predicted final size (`.resizeToTarget`). That size is the pane's share of `widthChange`, in proportion to its share of `contentWidth`.
   - An observer gives up by itself if no end notice arrives within 2 seconds.
     - The `RiftView` listens for its own notices too. When an animation begins, it holds each pane's content at the larger of its current size and its final size, clipped to the pane, until the last end notice arrives. Content therefore reflows once instead of on every frame, and never leaves a gap. Animations that overlap (a fold reversed halfway) are counted, so the content is only released when all of them have ended.
-- **Structural activity:** `structuralActivity` and `onStructuralActivityChange` report what is reshaping the panes right now: an animated layout change, a divider drag, a live window resize or a pane drag. Pane content can use this to stop scrollers flashing or to pause redraws.
-- **Pane surfaces:** Rift draws no pane background itself. Set `configuration.paneSurface` to draw one behind each pane's content.
-  - `RiftPaneSurfaces.modern(.comfortable)` gives glass cards: 10pt corners, a tinted glass layer (liquid glass on macOS 26 and later, a visual-effect material before), a light fill, and in dark mode an overlay backdrop. `.modern(.compact)` gives plain touching panes.
+- **Structural activity:** `structuralActivity` and `onStructuralActivityChange` report what is reshaping the panes right now: an animated layout change, a divider drag, a live window resize or a pane drag. Pane content can use this to stop scrollers flashing or to pause redraws. While anything reshapes, views that adopt `RiftScrollerSuppressing` are asked to hide their own scrollers; other scroll views' scrollers are faded out.
+- **Presentation:** each pane's content (and any object added with `addPresentationObserver(_:for:)`) hears whether the layout has settled, the animated zoom fraction, its content, target and surface sizes, and how much content is cut off past the trailing edge.
+- **Pane surfaces:** Rift draws no pane background itself. Set `configuration.paneSurface` to draw one behind each pane's content, and `configuration.windowSurface` for one behind the whole layout (a window material with a tint and backdrop, and a soft inner shadow along the window's edge).
+  - `RiftPaneSurfaces.modern(.comfortable)` gives glass cards: 10pt corners, a tinted glass layer (liquid glass on macOS 26 and later, a visual-effect material before), a light fill, and in dark mode an overlay backdrop. `.modern(.compact)` gives touching panes with a 1pt line drawn over their shared edges (`metrics.lineThickness`), a faint backdrop on the focused pane in dark mode, and near-white fills in light mode. The `.comfortable` and `.compact` configuration presets set the matching window surface too.
   - Each surface has a style per state (pane, focused pane, and both again for background windows) and per appearance. A style stacks shadows, a backdrop, glass, two fills and strokes, and sets the content's opacity.
   - For your own surface, adopt `RiftPaneSurfaceProviding`: make a view, update it for each state, and give the content opacity.
   - Content must be partly transparent for a glass surface to show.

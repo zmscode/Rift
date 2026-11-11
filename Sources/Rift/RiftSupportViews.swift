@@ -49,6 +49,16 @@ final class RiftPaneContainerView: RiftFlippedView {
 	var activeAlpha: CGFloat = 1 { didSet { updateFocusAppearance() } }
 	var isFocused = false { didSet { updateFocusAppearance() } }
 
+	/// The pane's opacity is the product of these: a pane being dragged, a layout motion (growth
+	/// or a visibility fade), and a pop in or out.
+	var dragAlpha: CGFloat = 1 { didSet { refreshAlpha() } }
+	var motionAlpha: CGFloat = 1 { didSet { refreshAlpha() } }
+	var popAlpha: CGFloat = 1 { didSet { refreshAlpha() } }
+	private func refreshAlpha() {
+		let alpha = dragAlpha * motionAlpha * popAlpha
+		if alphaValue != alpha { alphaValue = alpha }
+	}
+
 	init(content: NSView) {
 		contentView = content
 		super.init(frame: .zero)
@@ -90,10 +100,13 @@ final class RiftPaneContainerView: RiftFlippedView {
 	}
 
 	/// While set, the content keeps this pane size (top-left aligned, clipped) instead of following
-	/// the container, so it reflows once rather than on every animation frame.
-	var pinnedPaneSize: CGSize? {
-		didSet { if pinnedPaneSize != oldValue { layoutParts() } }
+	/// the container, so it reflows once rather than on every animation frame. A container
+	/// (sidebar) animation's size wins over a layout motion's.
+	var containerPinnedSize: CGSize? {
+		didSet { if containerPinnedSize != oldValue { layoutParts() } }
 	}
+	var motionPinnedSize: CGSize? { didSet { if motionPinnedSize != oldValue { layoutParts() } } }
+	var pinnedPaneSize: CGSize? { containerPinnedSize ?? motionPinnedSize }
 
 	private func layoutParts() {
 		let h =
@@ -451,34 +464,93 @@ final class RiftPaneHeaderView: RiftFlippedView {
 	override func mouseExited(with event: NSEvent) { onPointerRegionChange?() }
 }
 
-/// Draws the focus ring. Never intercepts the mouse.
-final class RiftFocusBorderView: RiftFlippedView {
-	var isFocused = false { didSet { needsDisplay = true } }
-	var isEnabled = true { didSet { needsDisplay = true } }
-	var color: NSColor? { didSet { needsDisplay = true } }
-	var lineWidth: CGFloat = 2 { didSet { needsDisplay = true } }
-	var cornerRadius: CGFloat = 0 { didSet { needsDisplay = true } }
+/// The radius of each corner of a rectangle.
+public struct RiftCornerRadii: Hashable, Sendable {
+	public var topLeft: CGFloat
+	public var topRight: CGFloat
+	public var bottomLeft: CGFloat
+	public var bottomRight: CGFloat
 
-	override func hitTest(_ point: NSPoint) -> NSView? { nil }
+	public init(topLeft: CGFloat, topRight: CGFloat, bottomLeft: CGFloat, bottomRight: CGFloat) {
+		self.topLeft = topLeft
+		self.topRight = topRight
+		self.bottomLeft = bottomLeft
+		self.bottomRight = bottomRight
+	}
 
-	override func draw(_ dirtyRect: NSRect) {
-		guard isEnabled, isFocused, lineWidth > 0 else { return }
-		let rect = bounds.insetBy(dx: lineWidth / 2, dy: lineWidth / 2)
-		let radius = max(0, cornerRadius - lineWidth / 2)
-		let path = NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
-		path.lineWidth = lineWidth
-		(color ?? .controlAccentColor).setStroke()
-		path.stroke()
+	public init(_ all: CGFloat) {
+		self.init(topLeft: all, topRight: all, bottomLeft: all, bottomRight: all)
+	}
+
+	/// Each radius reduced by `amount` (never below zero).
+	public func inset(by amount: CGFloat) -> Self {
+		Self(
+			topLeft: max(0, topLeft - amount), topRight: max(0, topRight - amount),
+			bottomLeft: max(0, bottomLeft - amount), bottomRight: max(0, bottomRight - amount))
+	}
+
+	/// A rounded rectangle path with these corners, in a y-down space.
+	public func path(in rect: CGRect) -> CGPath {
+		let path = CGMutablePath()
+		let limit = min(rect.width, rect.height) / 2
+		let tl = min(topLeft, limit)
+		let tr = min(topRight, limit)
+		let bl = min(bottomLeft, limit)
+		let br = min(bottomRight, limit)
+		path.move(to: CGPoint(x: rect.minX + tl, y: rect.minY))
+		path.addLine(to: CGPoint(x: rect.maxX - tr, y: rect.minY))
+		path.addArc(
+			tangent1End: CGPoint(x: rect.maxX, y: rect.minY),
+			tangent2End: CGPoint(x: rect.maxX, y: rect.minY + tr), radius: tr)
+		path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - br))
+		path.addArc(
+			tangent1End: CGPoint(x: rect.maxX, y: rect.maxY),
+			tangent2End: CGPoint(x: rect.maxX - br, y: rect.maxY), radius: br)
+		path.addLine(to: CGPoint(x: rect.minX + bl, y: rect.maxY))
+		path.addArc(
+			tangent1End: CGPoint(x: rect.minX, y: rect.maxY),
+			tangent2End: CGPoint(x: rect.minX, y: rect.maxY - bl), radius: bl)
+		path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + tl))
+		path.addArc(
+			tangent1End: CGPoint(x: rect.minX, y: rect.minY),
+			tangent2End: CGPoint(x: rect.minX + tl, y: rect.minY), radius: tl)
+		path.closeSubpath()
+		return path
 	}
 }
 
-/// Draws divider lines as layers, so they can use a blend mode.
-final class RiftDividerLinesView: NSView {
-	private var lineLayers: [CALayer] = []
+/// Draws the focus ring: a stroke (solid or gradient) with its own radius per corner. Never
+/// intercepts the mouse.
+final class RiftFocusBorderView: RiftFlippedView {
+	var isFocused = false { didSet { updateVisibility() } }
+	var isEnabled = true { didSet { updateVisibility() } }
+	var color: NSColor? { didSet { applyColors() } }
+	/// Gradient stops; `nil` strokes with `color`.
+	var gradientColors: [NSColor]? { didSet { applyColors() } }
+	/// Degrees, measured clockwise from the +x axis with y pointing down.
+	var gradientAngle: Double = 135 { didSet { applyGeometry() } }
+	var lineWidth: CGFloat = 2 { didSet { applyGeometry() } }
+	var cornerRadii = RiftCornerRadii(0) {
+		didSet { if cornerRadii != oldValue { applyGeometry() } }
+	}
+	/// A single radius for all corners.
+	var cornerRadius: CGFloat {
+		get { cornerRadii.topLeft }
+		set { cornerRadii = RiftCornerRadii(newValue) }
+	}
+
+	private let gradient = CAGradientLayer()
+	private let strokeMask = CAShapeLayer()
 
 	override init(frame: NSRect) {
 		super.init(frame: frame)
 		wantsLayer = true
+		strokeMask.fillColor = nil
+		strokeMask.strokeColor = NSColor.black.cgColor
+		gradient.mask = strokeMask
+		layer?.addSublayer(gradient)
+		updateVisibility()
+		applyColors()
 	}
 
 	@available(*, unavailable)
@@ -486,25 +558,116 @@ final class RiftDividerLinesView: NSView {
 
 	override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-	/// `rects` are in this view's coordinates.
-	func show(_ rects: [CGRect], color: NSColor, blendMode: RiftDividerBlendMode) {
+	override func setFrameSize(_ newSize: NSSize) {
+		super.setFrameSize(newSize)
+		applyGeometry()
+	}
+
+	override func viewDidChangeEffectiveAppearance() {
+		super.viewDidChangeEffectiveAppearance()
+		applyColors()
+	}
+
+	private func updateVisibility() {
+		gradient.isHidden = !(isEnabled && isFocused && lineWidth > 0)
+	}
+
+	private func applyColors() {
+		let base = color ?? .controlAccentColor
+		let stops = gradientColors ?? [base, base]
+		var cg: [CGColor] = []
+		effectiveAppearance.performAsCurrentDrawingAppearance { cg = stops.map(\.cgColor) }
+		CATransaction.begin()
+		CATransaction.setDisableActions(true)
+		gradient.colors = cg.count == 1 ? [cg[0], cg[0]] : cg
+		CATransaction.commit()
+	}
+
+	private func applyGeometry() {
+		CATransaction.begin()
+		CATransaction.setDisableActions(true)
+		defer { CATransaction.commit() }
+		gradient.frame = bounds
+		strokeMask.frame = bounds
+		strokeMask.lineWidth = lineWidth
+		let rect = bounds.insetBy(dx: lineWidth / 2, dy: lineWidth / 2)
+		strokeMask.path =
+			rect.width > 0 && rect.height > 0
+			? cornerRadii.inset(by: lineWidth / 2).path(in: rect) : nil
+		let radians = gradientAngle * .pi / 180
+		let dx = cos(radians) / 2
+		let dy = sin(radians) / 2
+		// The layer of a flipped view is flipped too, so unit y grows downward here.
+		gradient.startPoint = CGPoint(x: 0.5 - dx, y: 0.5 - dy)
+		gradient.endPoint = CGPoint(x: 0.5 + dx, y: 0.5 + dy)
+		updateVisibility()
+	}
+}
+
+/// Draws divider lines as layers, so they can use a blend mode and fade one by one.
+final class RiftDividerLinesView: NSView {
+	private var lineLayers: [CALayer] = []
+	private let coverMask = CAShapeLayer()
+
+	override init(frame: NSRect) {
+		super.init(frame: frame)
+		wantsLayer = true
+		coverMask.fillRule = .evenOdd
+		coverMask.fillColor = NSColor.black.cgColor
+	}
+
+	@available(*, unavailable)
+	required init?(coder: NSCoder) { fatalError() }
+
+	override var isFlipped: Bool { true }
+	override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+	/// `lines` are in this view's coordinates; each has its own opacity (0…1).
+	func show(
+		_ lines: [(rect: CGRect, opacity: CGFloat)], color: NSColor, blendMode: RiftDividerBlendMode
+	) {
 		guard let layer else { return }
 		CATransaction.begin()
 		CATransaction.setDisableActions(true)
-		while lineLayers.count < rects.count {
+		while lineLayers.count < lines.count {
 			let line = CALayer()
 			layer.addSublayer(line)
 			lineLayers.append(line)
 		}
-		while lineLayers.count > rects.count { lineLayers.removeLast().removeFromSuperlayer() }
+		while lineLayers.count > lines.count { lineLayers.removeLast().removeFromSuperlayer() }
 		var cgColor: CGColor?
 		effectiveAppearance.performAsCurrentDrawingAppearance { cgColor = color.cgColor }
-		for (line, rect) in zip(lineLayers, rects) {
-			line.frame = rect
+		let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+		for (line, item) in zip(lineLayers, lines) {
+			line.frame = item.rect
+			line.opacity = Float(min(max(item.opacity, 0), 1))
 			line.backgroundColor = cgColor
-			line.compositingFilter = blendMode.compositingFilter
+			line.compositingFilter = blendMode.compositingFilter(isDark: dark)
 		}
 		CATransaction.commit()
+	}
+
+	/// Hides the lines inside `rect` but outside its rounded inner edge `inset` points in: the band
+	/// a focus border covers, including its corners. `nil` shows every line.
+	func cover(_ rect: CGRect?, radii: RiftCornerRadii, inset: CGFloat) {
+		guard let layer else { return }
+		CATransaction.begin()
+		CATransaction.setDisableActions(true)
+		defer { CATransaction.commit() }
+		guard let rect, rect.width > 0, rect.height > 0 else {
+			layer.mask = nil
+			return
+		}
+		let path = CGMutablePath()
+		path.addRect(bounds)
+		path.addRect(rect)
+		let inner = rect.insetBy(dx: inset, dy: inset)
+		if inner.width > 0, inner.height > 0 {
+			path.addPath(radii.inset(by: inset).path(in: inner))
+		}
+		coverMask.frame = bounds
+		coverMask.path = path
+		layer.mask = coverMask
 	}
 
 	override func viewDidChangeEffectiveAppearance() {
@@ -537,6 +700,42 @@ final class RiftDropIndicatorView: RiftFlippedView {
 		stroke.lineWidth = 2
 		accent.setStroke()
 		stroke.stroke()
+	}
+}
+
+/// A borderless child window that shows the drop highlight above everything in its parent,
+/// including glass and other views' layers.
+final class RiftDropOverlayWindow: NSPanel {
+	let indicator = RiftDropIndicatorView()
+
+	init() {
+		super.init(
+			contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered,
+			defer: true)
+		isOpaque = false
+		backgroundColor = .clear
+		hasShadow = false
+		ignoresMouseEvents = true
+		isReleasedWhenClosed = false
+		collectionBehavior = [.transient, .ignoresCycle, .fullScreenAuxiliary]
+		indicator.autoresizingMask = [.width, .height]
+		contentView = indicator
+	}
+
+	/// Shows the highlight over `screenRect` above `parent`, or hides it.
+	func show(_ screenRect: CGRect?, above parent: NSWindow?) {
+		guard let screenRect, let parent else {
+			self.parent?.removeChildWindow(self)
+			orderOut(nil)
+			return
+		}
+		if self.parent !== parent {
+			self.parent?.removeChildWindow(self)
+			parent.addChildWindow(self, ordered: .above)
+		}
+		setFrame(screenRect, display: true)
+		indicator.needsDisplay = true
+		orderFront(nil)
 	}
 }
 

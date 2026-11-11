@@ -18,9 +18,20 @@ final class RiftPaneDragSession<PaneID: Hashable & Sendable> {
 		self.pane = pane
 
 		let maxSize = source.configuration.dragPreviewMaxSize
-		let scale = min(1, maxSize.width / frame.width, maxSize.height / frame.height)
-		let size = CGSize(
-			width: (frame.width * scale).rounded(), height: (frame.height * scale).rounded())
+		// The host's own preview view, sized to fit; else a scaled snapshot of the pane.
+		let custom = source.makeDragPreview?(pane)
+		let size: CGSize
+		if let custom {
+			let fitting = custom.fittingSize
+			size =
+				fitting.width > 0 && fitting.height > 0
+				? CGSize(width: fitting.width.rounded(.up), height: fitting.height.rounded(.up))
+				: maxSize
+		} else {
+			let scale = min(1, maxSize.width / frame.width, maxSize.height / frame.height)
+			size = CGSize(
+				width: (frame.width * scale).rounded(), height: (frame.height * scale).rounded())
+		}
 		panel = NSPanel(
 			contentRect: CGRect(origin: .zero, size: size),
 			styleMask: [.borderless, .nonactivatingPanel],
@@ -34,6 +45,12 @@ final class RiftPaneDragSession<PaneID: Hashable & Sendable> {
 		panel.isReleasedWhenClosed = false
 		panel.collectionBehavior = [.transient, .ignoresCycle]
 
+		if let custom {
+			custom.frame = CGRect(origin: .zero, size: size)
+			panel.contentView = custom
+			source.setDragging(pane)
+			return
+		}
 		let imageView = NSImageView(frame: CGRect(origin: .zero, size: size))
 		imageView.image = source.snapshot(of: pane)
 		imageView.imageScaling = .scaleAxesIndependently

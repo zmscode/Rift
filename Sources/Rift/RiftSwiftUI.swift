@@ -130,6 +130,7 @@ public struct RiftLayoutView<PaneID: Hashable & Sendable, Content: View>: NSView
 	private let onDividerDragChanged: ((Bool) -> Void)?
 	private let onStructuralActivityChange: ((RiftStructuralActivity) -> Void)?
 	private let onTearOut: ((PaneID, CGPoint) -> Void)?
+	private let dragPreview: ((PaneID) -> AnyView)?
 	private let content: (RiftPaneContext<PaneID>) -> Content
 
 	/// - Parameters:
@@ -138,6 +139,8 @@ public struct RiftLayoutView<PaneID: Hashable & Sendable, Content: View>: NSView
 	///   - zoomedPane: the zoomed pane, if the host wants to read or set it.
 	///   - onTearOut: a pane dropped outside every window. It has already been removed; open it
 	///     somewhere else (for example a new window with its own `RiftLayoutView`).
+	///   - dragPreview: the view floating under the pointer while a pane is dragged, sized to fit.
+	///     Without one, a snapshot of the pane is shown.
 	///   - content: the pane's SwiftUI content.
 	public init(
 		layout: Binding<RiftLayout<PaneID>?>,
@@ -150,6 +153,7 @@ public struct RiftLayoutView<PaneID: Hashable & Sendable, Content: View>: NSView
 		onDividerDragChanged: ((Bool) -> Void)? = nil,
 		onStructuralActivityChange: ((RiftStructuralActivity) -> Void)? = nil,
 		onTearOut: ((PaneID, CGPoint) -> Void)? = nil,
+		dragPreview: ((PaneID) -> AnyView)? = nil,
 		@ViewBuilder content: @escaping (RiftPaneContext<PaneID>) -> Content
 	) {
 		_layout = layout
@@ -162,6 +166,7 @@ public struct RiftLayoutView<PaneID: Hashable & Sendable, Content: View>: NSView
 		self.onDividerDragChanged = onDividerDragChanged
 		self.onStructuralActivityChange = onStructuralActivityChange
 		self.onTearOut = onTearOut
+		self.dragPreview = dragPreview
 		self.content = content
 	}
 
@@ -201,6 +206,9 @@ public struct RiftLayoutView<PaneID: Hashable & Sendable, Content: View>: NSView
 		view.onDividerDragChanged = { coordinator.parent.onDividerDragChanged?($0) }
 		view.onStructuralActivityChange = { coordinator.parent.onStructuralActivityChange?($0) }
 		view.onTearOut = { pane, _, point in coordinator.parent.onTearOut?(pane, point) }
+		view.makeDragPreview = { pane in
+			coordinator.parent.dragPreview.map { NSHostingView(rootView: $0(pane)) }
+		}
 		controller?.view = view
 		Self.syncFocus(in: view, coordinator: coordinator)
 		return view

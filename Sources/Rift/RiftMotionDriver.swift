@@ -101,14 +101,3 @@ extension NSView {
 				tx: size.width * (1 - scale) / 2, ty: size.height * (1 - scale) / 2))
 	}
 }
-
-extension CGRect {
-	func rift_interpolated(to other: CGRect, progress p: Double) -> CGRect {
-		let t = CGFloat(p)
-		return CGRect(
-			x: minX + (other.minX - minX) * t,
-			y: minY + (other.minY - minY) * t,
-			width: max(0, width + (other.width - width) * t),
-			height: max(0, height + (other.height - height) * t))
-	}
-}

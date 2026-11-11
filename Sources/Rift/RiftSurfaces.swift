@@ -233,19 +233,248 @@ public struct RiftPaneSurfaces: Hashable, Sendable, RiftPaneSurfaceProviding {
 					pane: darkPane, focusedPane: darkFocused, inactiveWindowPane: darkInactive,
 					inactiveWindowFocusedPane: darkInactiveFocused))
 		case .compact:
-			func opacity(_ value: CGFloat) -> RiftSurfaceStyle {
-				var style = RiftSurfaceStyle()
-				style.contentOpacity = value
-				return style
-			}
+			// Touching panes. Dark: the focused pane gets a faint white backdrop. Light: panes get a
+			// near-white plus-darker fill and the focused pane a grey one. Background windows keep
+			// the same looks with lower content opacity.
+			var darkPane = RiftSurfaceStyle()
+			darkPane.contentOpacity = 0.7
+			var darkFocused = darkPane
+			darkFocused.contentOpacity = 1
+			darkFocused.backdrop = RiftSurfaceFill(color: rgb(1, 0.03))
+			var darkInactive = darkPane
+			darkInactive.contentOpacity = 0.5
+			var darkInactiveFocused = darkFocused
+			darkInactiveFocused.contentOpacity = 0.8
+
+			var lightPane = RiftSurfaceStyle()
+			lightPane.contentOpacity = 0.7
+			lightPane.fill = RiftSurfaceFill(color: rgb(0.964706, 0.8), blendMode: .plusDarker)
+			var lightFocused = lightPane
+			lightFocused.contentOpacity = 1
+			lightFocused.fill = RiftSurfaceFill(color: rgb(0.156863, 0.3))
+			var lightInactive = lightPane
+			lightInactive.contentOpacity = 0.6
+			var lightInactiveFocused = lightFocused
+			lightInactiveFocused.contentOpacity = 0.85
 			return RiftPaneSurfaces(
 				light: States(
-					pane: opacity(0.7), focusedPane: opacity(1), inactiveWindowPane: opacity(0.6),
-					inactiveWindowFocusedPane: opacity(0.85)),
+					pane: lightPane, focusedPane: lightFocused, inactiveWindowPane: lightInactive,
+					inactiveWindowFocusedPane: lightInactiveFocused),
 				dark: States(
-					pane: opacity(0.7), focusedPane: opacity(1), inactiveWindowPane: opacity(0.5),
-					inactiveWindowFocusedPane: opacity(0.8)))
+					pane: darkPane, focusedPane: darkFocused, inactiveWindowPane: darkInactive,
+					inactiveWindowFocusedPane: darkInactiveFocused))
 		}
+	}
+}
+
+// MARK: - Window surface
+
+/// The surface behind the whole layout: a window material with a tint and a backdrop, and a soft
+/// inner shadow along the window's edge.
+public struct RiftWindowSurface: Hashable, Sendable {
+	public struct Look: Hashable, Sendable {
+		/// The material shown behind the window.
+		public var material: NSVisualEffectView.Material?
+		public var tint: NSColor?
+		public var backdrop: RiftSurfaceFill?
+
+		public init(
+			material: NSVisualEffectView.Material? = .hudWindow, tint: NSColor? = nil,
+			backdrop: RiftSurfaceFill? = nil
+		) {
+			self.material = material
+			self.tint = tint
+			self.backdrop = backdrop
+		}
+	}
+
+	/// A shadow cast inward from the window's edge. Only the shadow is drawn ("knockout").
+	public struct InnerShadow: Hashable, Sendable {
+		public var color: NSColor
+		public var opacity: Float
+		public var blurRadius: CGFloat
+		/// Positive y moves the shadow down.
+		public var offset: CGSize
+		public var blendMode: RiftDividerBlendMode
+		/// The shadow's corner radius; `nil` follows the window's corners.
+		public var cornerRadius: CGFloat?
+
+		public init(
+			color: NSColor, opacity: Float = 1, blurRadius: CGFloat, offset: CGSize,
+			blendMode: RiftDividerBlendMode = .normal, cornerRadius: CGFloat? = nil
+		) {
+			self.color = color
+			self.opacity = opacity
+			self.blurRadius = blurRadius
+			self.offset = offset
+			self.blendMode = blendMode
+			self.cornerRadius = cornerRadius
+		}
+	}
+
+	public var cornerRadius: CGFloat
+	public var light: Look
+	public var dark: Look
+	public var inactiveWindowLight: Look
+	public var inactiveWindowDark: Look
+	public var lightInnerShadow: InnerShadow?
+	public var darkInnerShadow: InnerShadow?
+
+	public init(
+		cornerRadius: CGFloat = 12, light: Look, dark: Look, inactiveWindowLight: Look? = nil,
+		inactiveWindowDark: Look? = nil, lightInnerShadow: InnerShadow? = nil,
+		darkInnerShadow: InnerShadow? = nil
+	) {
+		self.cornerRadius = cornerRadius
+		self.light = light
+		self.dark = dark
+		self.inactiveWindowLight = inactiveWindowLight ?? light
+		self.inactiveWindowDark = inactiveWindowDark ?? dark
+		self.lightInnerShadow = lightInnerShadow
+		self.darkInnerShadow = darkInnerShadow
+	}
+
+	public func look(isDark: Bool, isWindowActive: Bool) -> Look {
+		switch (isDark, isWindowActive) {
+		case (true, true): dark
+		case (true, false): inactiveWindowDark
+		case (false, true): light
+		case (false, false): inactiveWindowLight
+		}
+	}
+
+	/// The built-in "modern" window: the HUD material with a dark grey tint (α 0.5) and a black
+	/// overlay backdrop (α 0.6) in dark mode; a white (compact) or grey (comfortable) tint at α 0.7
+	/// in light mode; 12pt corners. In background windows, comfortable dark tints white at α 0.5.
+	/// Inner shadow: dark, white α 0.6 overlay, blur 2.5, 1.5pt down; light, white plus-lighter at
+	/// opacity 0.15, blur 1, 0.5pt down, 16pt corners.
+	public static func modern(_ density: RiftPaneSurfaces.Density) -> RiftWindowSurface {
+		func rgb(_ v: CGFloat, _ a: CGFloat) -> NSColor {
+			NSColor(srgbRed: v, green: v, blue: v, alpha: a)
+		}
+		let canvas: CGFloat = 0.117647
+		let dark = Look(
+			tint: rgb(canvas, 0.5),
+			backdrop: RiftSurfaceFill(color: rgb(0, 0.6), blendMode: .overlay))
+		var inactiveDark = dark
+		if density == .comfortable { inactiveDark.tint = rgb(1, 0.5) }
+		let light = Look(tint: density == .compact ? rgb(1, 0.7) : rgb(canvas, 0.7))
+		return RiftWindowSurface(
+			cornerRadius: 12, light: light, dark: dark, inactiveWindowDark: inactiveDark,
+			lightInnerShadow: InnerShadow(
+				color: rgb(1, 1), opacity: 0.15, blurRadius: 1,
+				offset: CGSize(width: 0, height: 0.5),
+				blendMode: .plusLighter, cornerRadius: 16),
+			darkInnerShadow: InnerShadow(
+				color: rgb(1, 0.6), blurRadius: 2.5, offset: CGSize(width: 0, height: 1.5),
+				blendMode: .overlay))
+	}
+}
+
+/// Draws a `RiftWindowSurface` behind the panes.
+final class RiftWindowSurfaceView: NSView {
+	var surface: RiftWindowSurface? { didSet { if surface != oldValue { apply() } } }
+	var isWindowActive = true { didSet { if isWindowActive != oldValue { apply() } } }
+
+	private let material = NSVisualEffectView()
+	private let tint = CALayer()
+	private let backdrop = CALayer()
+	private let shadowHost = CALayer()
+	private let shadowLayer = CAShapeLayer()
+	private let shadowMask = CAShapeLayer()
+
+	override init(frame: NSRect) {
+		super.init(frame: frame)
+		wantsLayer = true
+		material.blendingMode = .behindWindow
+		material.state = .followsWindowActiveState
+		material.autoresizingMask = [.width, .height]
+		addSubview(material)
+		layer?.addSublayer(tint)
+		layer?.addSublayer(backdrop)
+		shadowLayer.fillRule = .evenOdd
+		shadowLayer.fillColor = NSColor.black.cgColor
+		shadowHost.mask = shadowMask
+		shadowHost.addSublayer(shadowLayer)
+		layer?.addSublayer(shadowHost)
+		apply()
+	}
+
+	@available(*, unavailable)
+	required init?(coder: NSCoder) { fatalError() }
+
+	override var isFlipped: Bool { true }
+	override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+	override func layout() {
+		super.layout()
+		frameLayers()
+	}
+
+	override func viewDidChangeEffectiveAppearance() {
+		super.viewDidChangeEffectiveAppearance()
+		apply()
+	}
+
+	private var isDark: Bool {
+		effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+	}
+
+	private func cgColor(_ color: NSColor?) -> CGColor? {
+		guard let color else { return nil }
+		var result: CGColor?
+		effectiveAppearance.performAsCurrentDrawingAppearance { result = color.cgColor }
+		return result
+	}
+
+	private func apply() {
+		isHidden = surface == nil
+		guard let surface else { return }
+		CATransaction.begin()
+		CATransaction.setDisableActions(true)
+		defer { CATransaction.commit() }
+		let look = surface.look(isDark: isDark, isWindowActive: isWindowActive)
+		material.isHidden = look.material == nil
+		if let m = look.material { material.material = m }
+		tint.backgroundColor = cgColor(look.tint)
+		backdrop.backgroundColor = cgColor(look.backdrop?.color)
+		backdrop.compositingFilter = look.backdrop?.blendMode.compositingFilter
+		let inner = isDark ? surface.darkInnerShadow : surface.lightInnerShadow
+		shadowHost.isHidden = inner == nil
+		if let inner {
+			shadowLayer.shadowColor = cgColor(inner.color)
+			shadowLayer.shadowOpacity = inner.opacity
+			shadowLayer.shadowRadius = inner.blurRadius
+			// Layers here are flipped (y down), so a positive offset moves the shadowLayer down.
+			shadowLayer.shadowOffset = inner.offset
+			shadowHost.compositingFilter = inner.blendMode.compositingFilter
+		}
+		frameLayers()
+	}
+
+	private func frameLayers() {
+		CATransaction.begin()
+		CATransaction.setDisableActions(true)
+		defer { CATransaction.commit() }
+		let rect = bounds
+		tint.frame = rect
+		backdrop.frame = rect
+		shadowHost.frame = rect
+		shadowLayer.frame = rect
+		shadowMask.frame = rect
+		guard let surface else { return }
+		let inner = isDark ? surface.darkInnerShadow : surface.lightInnerShadow
+		let radius = min(
+			inner?.cornerRadius ?? surface.cornerRadius, min(rect.width, rect.height) / 2)
+		let window = CGPath(
+			roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil)
+		// A frame around the window casts the shadowLayer inward; the mask keeps only the inside.
+		let ring = CGMutablePath()
+		ring.addRect(rect.insetBy(dx: -40, dy: -40))
+		ring.addPath(window)
+		shadowLayer.path = ring
+		shadowLayer.shadowPath = ring
+		shadowMask.path = window
 	}
 }
 

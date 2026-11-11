@@ -116,7 +116,7 @@ struct DemoWindow: View {
 					onStructuralActivityChange: { activity = $0 },
 					onTearOut: { pane, _ in openWindow(value: pane) }
 				) { pane in
-					DemoPane(pane: pane, translucent: surface == .comfortable)
+					DemoPane(pane: pane, translucent: surface != .plain)
 				}
 				if showsControls {
 					controls.frame(width: Self.sidebarWidth).transition(.move(edge: .trailing))
@@ -194,12 +194,26 @@ struct DemoWindow: View {
 
 					section("Motion", "Snappy: critically damped spring. Natural: slight overshoot.")
 					picker(["Snappy", "Natural", "Off"], values: [.snappy, .natural, .off], \.animationStyle)
+					section("New panes", "Pop in from 87% size, or grow out of the edge they were split from.")
+					picker(["Pop in", "Grow from edge"], values: [.popIn, .edgeGrowth], \.paneTransition)
+					section("Content while moving", "Follow the pane, or hold the larger size until it settles.")
+					picker(
+						["Follow", "Hold"], values: [.followsSurface, .pinnedDuringMotion],
+						\.paneContentSizing)
 
 					section("Focus border", "Dims in background windows.")
 					picker(
 						["Glide", "Crossfade", "Off"], values: [.glide, .crossfade, .off],
 						\.focusBorderTransition)
 					toggle("Show focus border", \.showsFocusBorder)
+					toggle("Gradient stroke", \.focusBorderUsesGradient)
+					toggle("Follow window corners", \.focusBorderFollowsWindowCorners)
+					toggle("Cover divider lines", \.focusBorderCoversDividers)
+
+					section("Unfocused panes", "What an unfocused pane loses: its surface look, its content opacity, or both.")
+					picker(
+						["None", "Surface", "Content", "Both"], values: [.none, .styling, .text, .both],
+						\.inactivePaneFade)
 
 					section(
 						"Pane surfaces",
@@ -212,12 +226,13 @@ struct DemoWindow: View {
 
 					section("Divider lines", "Blend mode for the lines in compact density.")
 					picker(
-						["Normal", "Darker", "Lighter", "Overlay"],
-						values: [.normal, .plusDarker, .plusLighter, .overlay], \.dividerBlendMode)
+						["Auto", "Normal", "Darker", "Lighter"],
+						values: [.automatic, .normal, .plusDarker, .plusLighter], \.dividerBlendMode)
 
 					section("Panes")
 					toggle("Hide scrollers while reshaping", \.hidesScrollersDuringStructuralChanges)
 					toggle("Middle of a pane swaps on drop", \.allowsCenterDrop)
+					toggle("Drop highlight above everything", \.dropIndicatorUsesChildWindow)
 					toggle("Double-click a divider to centre it", \.doubleClickCentersDivider)
 					toggle("Pinch to zoom", \.allowsPinchToZoom)
 
@@ -267,25 +282,26 @@ struct DemoWindow: View {
 	private func applySurface(_ choice: SurfaceChoice) {
 		configure {
 			switch choice {
-			case .comfortable:
-				$0.metrics.dividerThickness = 8
-				$0.showsDividerLines = false
-				$0.paneCornerRadius = 10
-				$0.dropIndicatorCornerRadius = 8
-				$0.paneSurface = RiftPaneSurface(.modern(.comfortable))
-			case .compact:
-				$0.metrics.dividerThickness = 1
-				$0.showsDividerLines = true
-				$0.dividerColor = NSColor.separatorColor.withAlphaComponent(0.7)
-				$0.paneCornerRadius = 0
-				$0.dropIndicatorCornerRadius = 0
-				$0.paneSurface = RiftPaneSurface(.modern(.compact))
+			case .comfortable, .compact:
+				let preset: RiftConfiguration = choice == .comfortable ? .comfortable : .compact
+				$0.metrics = preset.metrics
+				$0.showsDividerLines = preset.showsDividerLines
+				$0.dividerColor = preset.dividerColor
+				$0.dividerBlendMode = preset.dividerBlendMode
+				$0.paneCornerRadius = preset.paneCornerRadius
+				$0.layoutCornerRadius = preset.layoutCornerRadius
+				$0.dropIndicatorCornerRadius = preset.dropIndicatorCornerRadius
+				$0.paneSurface = preset.paneSurface
+				$0.windowSurface = preset.windowSurface
 			case .plain:
 				$0.metrics.dividerThickness = 4
+				$0.metrics.lineThickness = nil
 				$0.dividerColor = .clear
 				$0.paneCornerRadius = 6
+				$0.layoutCornerRadius = nil
 				$0.dropIndicatorCornerRadius = 8
 				$0.paneSurface = nil
+				$0.windowSurface = nil
 			}
 		}
 	}

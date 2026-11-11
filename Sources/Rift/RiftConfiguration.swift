@@ -54,6 +54,11 @@ public struct RiftConfiguration: Equatable {
 	/// opaque the content is per state. `nil` (the default) draws nothing; content draws its own
 	/// background. Use `RiftPaneSurfaces.modern(_:)` or your own `RiftPaneSurfaceProviding`.
 	public var paneSurface: RiftPaneSurface?
+	/// The surface behind the whole layout (window material, tint, inner shadow). `nil` draws none.
+	public var windowSurface: RiftWindowSurface?
+	/// What an unfocused pane loses: its surface look (`styling`), its content opacity (`text`),
+	/// both, or neither.
+	public var inactivePaneFade: RiftInactivePaneFade = .both
 
 	public var metrics = RiftMetrics()
 	public var snap = RiftSnapConfiguration()
@@ -96,6 +101,19 @@ public struct RiftConfiguration: Equatable {
 	public var inactiveWindowFocusBorderOpacity: CGFloat = 0.35
 	/// Opacity of the focus border (before the inactive-window factor).
 	public var focusBorderOpacity: CGFloat = 1
+	/// Stroke the focus border with a gradient: the colour mixed 10% toward white, the colour,
+	/// and the colour mixed 10% toward black (perceptually), at `focusBorderGradientAngle`.
+	public var focusBorderUsesGradient = true
+	/// Degrees; 135 runs from the top-left corner to the bottom-right.
+	public var focusBorderGradientAngle: Double = 135
+	/// Corners of the border that touch the edge of the layout follow the window's corners
+	/// (`layoutCornerRadius`) instead of the pane's.
+	public var focusBorderFollowsWindowCorners = true
+	/// The radius of the layout's outer corners, usually the window's. `nil` uses the pane radius.
+	public var layoutCornerRadius: CGFloat? = nil
+	/// Hide divider lines where they run under the focus border, so they don't show through it
+	/// or poke out past its rounded corners.
+	public var focusBorderCoversDividers = true
 	/// Alpha applied to the content of panes that don't have focus (1 = no fading).
 	public var inactivePaneAlpha: CGFloat = 0.7
 	/// Content alpha while the window isn't key, for the focused pane and for the others.
@@ -105,6 +123,10 @@ public struct RiftConfiguration: Equatable {
 	/// Hide the scrollers of scroll views inside panes while panes are being reshaped
 	/// (`structuralActivity` is not empty), so they don't flash.
 	public var hidesScrollersDuringStructuralChanges = true
+	/// How pane content is sized while the layout moves.
+	public var paneContentSizing: RiftPaneContentSizing = .followsSurface
+	/// Hold a zooming pane's content at its larger size while the zoom animates.
+	public var pinsContentDuringZoom = false
 	public var focusFollowsMouse = false
 
 	/// Double-clicking a divider centres it. Off by default.
@@ -123,6 +145,9 @@ public struct RiftConfiguration: Equatable {
 	public var dropIndicatorCornerRadius: CGFloat = 8
 	/// `nil` uses the system accent color.
 	public var dropIndicatorColor: NSColor?
+	/// Draw the drop highlight in a child window above this one, so it shows over glass and
+	/// anything else in the window. Off draws it as a view above the panes.
+	public var dropIndicatorUsesChildWindow = true
 	/// Distance the mouse must travel before a pane drag starts.
 	/// 0 (the default) starts the drag on the first mouse-dragged event; a press that ends
 	/// without moving is passed through to the pane content as a click.
@@ -137,6 +162,15 @@ public struct RiftConfiguration: Equatable {
 	/// Multiplies the durations of panes appearing and disappearing.
 	public var popInTimeScale: Double = 1
 	/// How panes appear and disappear for the current `animationStyle`, or `nil` when it is `.off`.
+	/// How panes appear and disappear.
+	public var paneTransition: RiftPaneTransitionKind = .popIn
+	/// The transition with its timings, or `nil` when motion is off.
+	public var paneTransitionStyle: RiftPaneTransitionStyle? {
+		switch paneTransition {
+		case .popIn: panePopIn.map { .popIn($0) }
+		case .edgeGrowth: animationStyle.paneCurve == nil ? nil : .edgeGrowth
+		}
+	}
 	public var panePopIn: RiftPanePopIn? {
 		animationStyle.paneCurve.map { .standard(entryCurve: $0, timeScale: popInTimeScale) }
 	}
@@ -160,6 +194,34 @@ public struct RiftStructuralActivity: OptionSet, Sendable, Hashable {
 }
 
 /// How the focus border moves when focus changes.
+/// How panes appear and disappear (see `RiftPaneTransitionStyle`).
+public enum RiftPaneTransitionKind: String, Sendable, Hashable, CaseIterable {
+	case popIn
+	case edgeGrowth
+}
+
+/// How pane content is sized while the layout moves.
+public enum RiftPaneContentSizing: String, Sendable, Hashable, CaseIterable {
+	/// Content follows its pane on every frame.
+	case followsSurface
+	/// Content keeps the larger of its start and end size until the motion ends, clipped to the
+	/// pane, so it reflows once.
+	case pinnedDuringMotion
+}
+
+/// What an unfocused pane loses.
+public enum RiftInactivePaneFade: String, Sendable, Hashable, CaseIterable {
+	case none
+	/// The surface takes its unfocused look; content stays fully opaque.
+	case styling
+	/// Content takes the unfocused opacity; the surface keeps its focused look.
+	case text
+	case both
+
+	public var fadesStyling: Bool { self == .styling || self == .both }
+	public var fadesText: Bool { self == .text || self == .both }
+}
+
 public enum RiftFocusBorderTransition: String, Sendable, Hashable, CaseIterable {
 	/// The border slides from the old pane to the new one on the pane motion curve, taking half
 	/// that curve's transition time.
@@ -175,22 +237,33 @@ extension RiftConfiguration {
 	public static var comfortable: RiftConfiguration {
 		var configuration = RiftConfiguration()
 		configuration.metrics.dividerThickness = 8
+		configuration.showsDividerLines = false
 		configuration.dividerColor = .clear
 		configuration.paneCornerRadius = 10
 		configuration.dropIndicatorCornerRadius = 8
+		configuration.layoutCornerRadius = 12
 		configuration.paneSurface = RiftPaneSurface(.modern(.comfortable))
+		configuration.windowSurface = .modern(.comfortable)
 		return configuration
 	}
 
 	/// Panes that touch, separated by a 1pt line at 70% opacity, with square corners.
 	public static var compact: RiftConfiguration {
 		var configuration = RiftConfiguration()
-		configuration.metrics.dividerThickness = 1
+		// Panes touch; a 1pt line is drawn over their shared edge.
+		configuration.metrics.dividerThickness = 0
+		configuration.metrics.lineThickness = 1
 		configuration.showsDividerLines = true
-		configuration.dividerColor = NSColor.separatorColor.withAlphaComponent(0.7)
+		configuration.dividerColor = NSColor(name: nil) { appearance in
+			appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+				? NSColor(white: 1, alpha: 0.7) : NSColor(white: 0, alpha: 0.7)
+		}
+		configuration.dividerBlendMode = .automatic
 		configuration.paneCornerRadius = 0
 		configuration.dropIndicatorCornerRadius = 0
+		configuration.layoutCornerRadius = 12
 		configuration.paneSurface = RiftPaneSurface(.modern(.compact))
+		configuration.windowSurface = .modern(.compact)
 		return configuration
 	}
 }
@@ -198,11 +271,21 @@ extension RiftConfiguration {
 /// Blend modes for divider lines (Core Animation compositing filters).
 public enum RiftDividerBlendMode: String, Sendable, Hashable, CaseIterable {
 	case normal, plusDarker, plusLighter, colorDodge, overlay, color
+	/// Plus-lighter in dark mode, plus-darker in light mode.
+	case automatic
 
-	/// The `CALayer.compositingFilter` name, or `nil` for normal blending.
+	/// The filter for this mode in the given appearance.
+	public func compositingFilter(isDark: Bool) -> String? {
+		self == .automatic
+			? (isDark ? RiftDividerBlendMode.plusLighter : .plusDarker).compositingFilter
+			: compositingFilter
+	}
+
+	/// The `CALayer.compositingFilter` name, or `nil` for normal blending (and for `automatic`,
+	/// which needs the appearance: see `compositingFilter(isDark:)`).
 	public var compositingFilter: String? {
 		switch self {
-		case .normal: nil
+		case .normal, .automatic: nil
 		case .plusDarker: "plusD"
 		case .plusLighter: "plusL"
 		case .colorDodge: "colorDodgeBlendMode"
