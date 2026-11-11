@@ -146,7 +146,17 @@ final class RiftPaneDragSession<PaneID: Hashable & Sendable> {
 				&& $0.window?.windowNumber == number
 				&& !$0.isHiddenOrHasHiddenAncestor
 		}
-		for view in candidates {
+		// Floating layers' views sit inside the tiled view: try the deepest first.
+		func depth(_ view: NSView) -> Int {
+			var count = 0
+			var current = view.superview
+			while let next = current {
+				count += 1
+				current = next.superview
+			}
+			return count
+		}
+		for view in candidates.sorted(by: { depth($0) > depth($1) }) {
 			guard let window = view.window else { continue }
 			let point = view.convert(window.convertPoint(fromScreen: screenPoint), from: nil)
 			if let target = view.dropTarget(at: point, pane: pane, from: source) {

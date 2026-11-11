@@ -78,13 +78,15 @@ struct Navigator: View {
 	private var panes: some View {
 		group("This Tab") {
 			VStack(spacing: 1) {
-				ForEach(tab?.layout?.paneIDs ?? [], id: \.self) { id in
+				ForEach((tab?.layout?.paneIDs ?? []) + (tab?.floating.flatMap(\.layout.paneIDs) ?? []), id: \.self) { id in
 					let kind = PaneIDs.kind(of: id)
 					row(
 						symbol: kind.symbol, tint: kind.tint, title: PaneIDs.title(of: id),
 						isSelected: focused == id,
 						badge: tab?.zoomed == id ? "arrow.up.left.and.arrow.down.right"
-							: Files.shared.measuring.contains(id) ? "hourglass" : nil
+							: Files.shared.measuring.contains(id) ? "hourglass"
+							: (tab?.floating.contains { $0.layout.contains(id) } ?? false)
+								? "macwindow.on.rectangle" : nil
 					) { focused = id }
 					.contextMenu {
 						Button("Focus") { focused = id }

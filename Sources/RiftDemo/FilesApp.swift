@@ -85,6 +85,10 @@ struct FilesActions {
 	var goBack: () -> Void
 	var goForward: () -> Void
 	var goUp: () -> Void
+	/// Lifts the focused pane into a floating layer, or docks it back.
+	var toggleFloating: () -> Void
+	/// Minimises the floating layer with the focused pane (or brings the last one back).
+	var minimiseFloating: () -> Void
 }
 
 struct FilesActionsKey: FocusedValueKey { typealias Value = FilesActions }
@@ -104,6 +108,8 @@ struct FilesTab: Identifiable, @MainActor Equatable {
 	var layout: RiftLayout<String>?
 	var focused: String?
 	var zoomed: String?
+	/// Panes floating above this tab's layout.
+	var floating: [RiftFloatingLayer<String>] = []
 	/// A name the user gave it; otherwise it is named after its browser's folder.
 	var customTitle: String?
 	let controller = RiftController<String>()
@@ -126,7 +132,7 @@ struct FilesTab: Identifiable, @MainActor Equatable {
 	}
 
 	static func == (a: FilesTab, b: FilesTab) -> Bool {
-		a.id == b.id && a.layout == b.layout && a.focused == b.focused && a.zoomed == b.zoomed
+		a.id == b.id && a.layout == b.layout && a.focused == b.focused && a.zoomed == b.zoomed && a.floating == b.floating
 			&& a.customTitle == b.customTitle
 	}
 }
@@ -232,9 +238,9 @@ struct FilesWindow: View {
 		.frame(minHeight: 420)
 		.focusedSceneValue(\.files, actions)
 		// A tab whose last pane closed or moved away closes too, and the window with the last tab.
-		.onChange(of: tabs.map { $0.layout == nil }) { _, empties in
+		.onChange(of: tabs.map { $0.layout == nil && $0.floating.isEmpty }) { _, empties in
 			guard empties.contains(true) else { return }
-			for id in tabs.filter({ $0.layout == nil }).map(\.id) { closeTab(id) }
+			for id in tabs.filter({ $0.layout == nil && $0.floating.isEmpty }).map(\.id) { closeTab(id) }
 		}
 		.onAppear { Files.shared.record("window opened") }
 	}
@@ -306,7 +312,7 @@ struct FilesWindow: View {
 	private func layoutView(_ tab: Binding<FilesTab>) -> RiftLayoutView<String, FilesPane> {
 		let id = tab.wrappedValue.id
 		return RiftLayoutView(
-			layout: tab.layout, focusedPane: tab.focused, zoomedPane: tab.zoomed,
+			layout: tab.layout, focusedPane: tab.focused, zoomedPane: tab.zoomed, floating: tab.floating,
 			configuration: settings.configuration, controller: tab.wrappedValue.controller,
 			title: PaneIDs.title(of:),
 			onStructuralActivityChange: { activity = $0 },
@@ -414,7 +420,21 @@ struct FilesWindow: View {
 			},
 			goBack: { if let browser { Files.shared.goBack(browser) } },
 			goForward: { if let browser { Files.shared.goForward(browser) } },
-			goUp: { if let browser { Files.shared.goUp(browser) } })
+			goUp: { if let browser { Files.shared.goUp(browser) } },
+			toggleFloating: {
+				if controller?.toggleFloating() == true { Files.shared.record("floated or docked a pane") }
+			},
+			minimiseFloating: {
+				guard let tab = current?.wrappedValue else { return }
+				if let focused = tab.focused,
+					let layer = tab.floating.first(where: { $0.layout.contains(focused) && !$0.isMinimised })
+				{
+					controller?.setMinimised(true, layer: layer.id)
+					Files.shared.record("minimised a floating layer")
+				} else if let layer = tab.floating.last(where: \.isMinimised) {
+					controller?.setMinimised(false, layer: layer.id)
+				}
+			})
 	}
 }
 
@@ -459,6 +479,10 @@ struct RiftFilesApp: App {
 					}
 				}
 				Divider()
+				Button("Float or Dock Pane") { actions?.toggleFloating() }
+					.keyboardShortcut("f", modifiers: [.command, .option])
+				Button("Minimise Floating Layer") { actions?.minimiseFloating() }
+					.keyboardShortcut("m", modifiers: [.command, .option])
 				Button("Zoom Pane") { actions?.zoom() }.keyboardShortcut(
 					.return, modifiers: [.command, .shift])
 				Button("Balance") { actions?.balance() }.keyboardShortcut(

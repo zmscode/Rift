@@ -16,9 +16,13 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 
 	public private(set) var paneLayout: RiftLayout<PaneID>?
 	public private(set) var zoomedPane: PaneID?
+	/// The focused pane: one in the tiled layout, or one in a floating layer.
 	public var focusedPane: PaneID? {
-		get { focusedStorage }
-		set { setFocus(newValue, notify: false, makeFirstResponder: false) }
+		get { floatingFocus?.pane ?? focusedStorage }
+		set {
+			if let newValue, focusFloatingPane(newValue) { return }
+			setFocus(newValue, notify: false, makeFirstResponder: false)
+		}
 	}
 
 	public var configuration: RiftConfiguration {
@@ -122,6 +126,23 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 	private var isHoverLockSuspended = false
 	var draggingPane: PaneID?
 
+	// MARK: Floating state
+
+	/// Floating layers, back to front.
+	var floating: [RiftFloatingLayer<PaneID>] = []
+	var floatingViews: [UUID: RiftFloatingLayerView<PaneID>] = [:]
+	var floatingCapsules: [UUID: RiftFloatingCapsule] = [:]
+	/// The focused floating pane, when focus is in a floating layer.
+	var floatingFocus: (layer: UUID, pane: PaneID)?
+	/// The tiled pane that had focus before a floating pane took it (focus returns there).
+	var tiledFocusBeforeFloating: PaneID?
+	/// The focused tiled pane, ignoring floating focus.
+	var tiledFocus: PaneID? { focusedStorage }
+	/// A move or resize in progress: the layer, its frame when it started, and the edges.
+	var floatingInteraction: (layer: UUID, start: CGRect, edges: RiftResizeEdges?)?
+	/// Called when floating layers change (moves, resizes, panes moving in or out, minimising).
+	public var onFloatingLayersChange: (([RiftFloatingLayer<PaneID>]) -> Void)?
+
 	// MARK: Init
 
 	public init(
@@ -165,7 +186,9 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 	}
 
 	/// The content view of a pane, if it is in the layout.
-	public func contentView(for pane: PaneID) -> NSView? { containers[pane]?.contentView }
+	public func contentView(for pane: PaneID) -> NSView? {
+		containers[pane]?.contentView ?? floatingContentView(for: pane)
+	}
 
 	/// A pane's frame in this view's coordinates.
 	public func frame(of pane: PaneID) -> CGRect? { displayGeometry().paneFrames[pane] }
@@ -615,8 +638,16 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 			})
 	}
 
+	open override func didAddSubview(_ subview: NSView) {
+		super.didAddSubview(subview)
+		if !(subview is RiftFloatingLayerView<PaneID>), !(subview is RiftFloatingCapsule) {
+			keepFloatingInFront()
+		}
+	}
+
 	open override func setFrameSize(_ newSize: NSSize) {
 		super.setFrameSize(newSize)
+		layoutFloating()
 		placeContainers(animated: false, added: [])
 		rebuildAccessibility()
 		window?.invalidateCursorRects(for: self)
@@ -933,6 +964,8 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 
 	func setFocus(_ pane: PaneID?, notify: Bool, makeFirstResponder: Bool) {
 		let target = pane.flatMap { paneLayout?.contains($0) == true ? $0 : nil }
+		// Focusing a tiled pane takes focus out of the floating layers.
+		if target != nil, floatingFocus != nil { clearFloatingFocus() }
 		let changed = target != focusedStorage
 		focusedStorage = target
 		updateFocusAppearance()
@@ -1526,6 +1559,8 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 
 	open override func hitTest(_ point: NSPoint) -> NSView? {
 		guard !isHidden else { return nil }
+		// Floating layers (and their capsules) sit above the tiled panes and their dividers.
+		if let hit = floatingHitTest(point) { return hit }
 		let local = convert(point, from: superview)
 		if bounds.contains(local), dividerHit(at: local) != nil { return self }
 		return super.hitTest(point)
@@ -1732,6 +1767,10 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 		-> RiftDropTarget<PaneID>?
 	{
 		guard bounds.contains(point) else { return nil }
+		// A floating layer covers the tiled panes under it.
+		if floating.contains(where: { !$0.isMinimised && (floatingViews[$0.id]?.frame.contains(point) ?? false) }) {
+			return nil
+		}
 		guard paneLayout != nil else {
 			return RiftDropTarget(
 				pane: nil, zone: .center,

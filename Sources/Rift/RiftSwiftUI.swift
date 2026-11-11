@@ -22,6 +22,19 @@ public final class RiftController<PaneID: Hashable & Sendable> {
 	public func close(_ pane: PaneID? = nil) -> Bool { view?.close(pane) ?? false }
 	@discardableResult
 	public func closeOthers(_ pane: PaneID? = nil) -> Bool { view?.closeOthers(pane) ?? false }
+
+	/// Lifts a pane into a floating layer, or docks a floating one back into the layout.
+	@discardableResult
+	public func toggleFloating(_ pane: PaneID? = nil) -> Bool { view?.toggleFloating(pane) ?? false }
+
+	@discardableResult
+	public func float(_ pane: PaneID? = nil) -> Bool { view?.float(pane) ?? false }
+
+	@discardableResult
+	public func dock(_ pane: PaneID) -> Bool { view?.dock(pane) ?? false }
+
+	/// Minimises a floating layer to a capsule, or brings it back.
+	public func setMinimised(_ minimised: Bool, layer: UUID) { view?.setMinimised(minimised, layer: layer) }
 	@discardableResult
 	public func moveFocus(_ direction: RiftDirection, wraps: Bool = true) -> Bool {
 		view?.moveFocus(direction, wraps: wraps) ?? false
@@ -133,6 +146,7 @@ public struct RiftLayoutView<PaneID: Hashable & Sendable, Content: View>: NSView
 	@Binding private var layout: RiftLayout<PaneID>?
 	@Binding private var focusedPane: PaneID?
 	private let zoomedPane: Binding<PaneID?>?
+	private let floating: Binding<[RiftFloatingLayer<PaneID>]>?
 	fileprivate let configuration: RiftConfiguration
 	private let controller: RiftController<PaneID>?
 	private let title: ((PaneID) -> String)?
@@ -149,6 +163,7 @@ public struct RiftLayoutView<PaneID: Hashable & Sendable, Content: View>: NSView
 	///   - layout: the panes. Rift writes back every change it makes (drags, drops, closes).
 	///   - focusedPane: the focused pane, read and written.
 	///   - zoomedPane: the zoomed pane, if the host wants to read or set it.
+	///   - floating: floating layers above the layout (see `RiftFloatingLayer`), read and written.
 	///   - onTearOut: a pane dropped outside every window. It has already been removed; open it
 	///     somewhere else (for example a new window with its own `RiftLayoutView`).
 	///   - dragPreview: the view floating under the pointer while a pane is dragged, sized to fit.
@@ -160,6 +175,7 @@ public struct RiftLayoutView<PaneID: Hashable & Sendable, Content: View>: NSView
 		layout: Binding<RiftLayout<PaneID>?>,
 		focusedPane: Binding<PaneID?> = .constant(nil),
 		zoomedPane: Binding<PaneID?>? = nil,
+		floating: Binding<[RiftFloatingLayer<PaneID>]>? = nil,
 		configuration: RiftConfiguration = RiftConfiguration(),
 		controller: RiftController<PaneID>? = nil,
 		title: ((PaneID) -> String)? = nil,
@@ -174,6 +190,7 @@ public struct RiftLayoutView<PaneID: Hashable & Sendable, Content: View>: NSView
 		_layout = layout
 		_focusedPane = focusedPane
 		self.zoomedPane = zoomedPane
+		self.floating = floating
 		self.configuration = configuration
 		self.controller = controller
 		self.title = title
@@ -218,6 +235,11 @@ public struct RiftLayoutView<PaneID: Hashable & Sendable, Content: View>: NSView
 			if let view { Self.syncFocus(in: view, coordinator: coordinator) }
 		}
 		view.onZoomChange = { pane in coordinator.parent.zoomedPane?.wrappedValue = pane }
+		view.onFloatingLayersChange = { [weak view] layers in
+			coordinator.parent.floating?.wrappedValue = layers
+			if let view { Self.syncFocus(in: view, coordinator: coordinator) }
+		}
+		if let floating { view.setFloatingLayers(floating.wrappedValue) }
 		view.onLayoutSettled = { coordinator.parent.onLayoutSettled?() }
 		view.onDividerDragChanged = { coordinator.parent.onDividerDragChanged?($0) }
 		view.onStructuralActivityChange = { coordinator.parent.onStructuralActivityChange?($0) }
@@ -246,6 +268,9 @@ public struct RiftLayoutView<PaneID: Hashable & Sendable, Content: View>: NSView
 		view.paneTitle = title
 		controller?.view = view
 		if view.paneLayout != layout { view.setLayout(layout, animated: true) }
+		if let floating, view.floatingLayers != floating.wrappedValue {
+			view.setFloatingLayers(floating.wrappedValue)
+		}
 		if let focusedPane, view.focusedPane != focusedPane { view.focusedPane = focusedPane }
 		if let zoomedPane, view.zoomedPane != zoomedPane.wrappedValue {
 			view.setZoom(zoomedPane.wrappedValue)
@@ -256,7 +281,7 @@ public struct RiftLayoutView<PaneID: Hashable & Sendable, Content: View>: NSView
 	/// Keeps every pane's `isFocused` and label current.
 	@MainActor
 	private static func syncFocus(in view: RiftView<PaneID>, coordinator: Coordinator) {
-		for id in view.paneLayout?.paneIDs ?? [] {
+		for id in view.allPaneIDs {
 			guard let pane = view.contentView(for: id) as? RiftHostedPane<PaneID> else { continue }
 			let label = coordinator.parent.title?(id) ?? String(describing: id)
 			pane.setFocused(view.focusedPane == id, label: label)
