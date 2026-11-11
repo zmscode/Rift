@@ -53,6 +53,15 @@ A split-pane layout component for macOS. Use it from SwiftUI with `RiftLayoutVie
     - A swipe that starts over something that scrolls sideways is left to it.
     - Layouts inside keep room in their top pane headers for the window buttons and the toggle: none while a left sidebar is open, growing to 116pt as it folds (76pt beside a right sidebar).
     - `RiftTitlebarMetrics.sidebar(_:)` gives the headless window the matching 42pt titlebar and button offset.
+- **Tabs:** `RiftTabBarView` (SwiftUI: `RiftTabBar`) is a row of tabs, each of which can hold its own layout.
+    - Tabs share the bar: (room − 1pt per gap) ÷ count, at most 240pt (unless `fillsAvailableSpace`), never under 64pt. Past that the row scrolls (with the scroll wheel), keeping 2pt clear at each end, and the selected tab is scrolled into view.
+    - Tabs are 30pt tall (28pt compact), 1pt apart, on a 40pt-radius track. The selected tab sits on a glass surface (16.5pt corners) that slides between tabs; hovered tabs get a faint highlight; 1×18pt dividers separate tabs and hide beside the selected and hovered ones. A 34pt (32pt compact) new-tab button follows the track (`onNewTab`; double-clicking the empty bar also opens a tab).
+    - The close button (22pt) shows on the selected and hovered tabs. After closing a tab, the others keep their width until the pointer leaves the bar, so the next close button lands under the pointer. Busy tabs (`RiftTab.activity`) ask first, as panes do.
+    - Drag a tab past 4pt to move it. It follows the pointer, resisting past either end of the track (at most 60pt, easing in), and swaps with a neighbour once its centre passes the midpoint between their slots by a tenth of the distance (at most 8pt). The others slide over 0.28s. Dropped outside every window, it is torn off (`onTearOff`).
+    - Click the selected tab again to rename it, or use its menu: Rename, Move Backward, Move Forward, Close Tab, Close Other Tabs.
+    - Pane drags reach the bar: hover over a tab for 0.32s and it opens (with a small pulse), so the pane can be dropped into its layout; drop between tabs and a slot opens there for a new tab (`onPaneDrop`). Keep each tab's `RiftLayoutView` alive and hide the background ones with `layoutHidden(_:)`, so a pane dragged from a tab that is no longer shown can still land.
+    - Inside a `RiftSidebarSplitView` the bar keeps room for the window buttons and the toggle as the sidebar folds, as pane headers do. Layouts below the bar no longer touch the titlebar, so they keep no room of their own.
+    - `RiftTabSurfaces` holds the track, selection and hover looks (`.modern(_:)`, `themed(_:)`); `RiftTabBarMath`, `RiftTabBarLayout` and `RiftTabItemLayout` hold the numbers.
 - **Closing busy panes:** give `paneActivity` a short phrase for panes that are busy ("is still working"). Closing them (`close`, `closeOthers`) first shows a card over the layout, which is dimmed except for the pane in question. It lists the busy panes (click one to go to it; at most three, then a count), with Cancel (Escape) and Close (Return).
 - **Headless windows:** set `configuration.windowStyle = .headless`.
     - The titlebar and title are hidden, and content runs edge to edge.
@@ -89,7 +98,7 @@ A split-pane layout component for macOS. Use it from SwiftUI with `RiftLayoutVie
 | ---------- | ------------------------------------------------------------------------------------------------------------ |
 | `RiftCore` | Layout tree, geometry, divider-drag maths, drop zones, arrangement. Pure Swift and fully unit-tested.        |
 | `Rift`     | `RiftView` (AppKit), the pane drag session, and the SwiftUI wrapper `RiftLayoutView`. Re-exports `RiftCore`. |
-| `RiftDemo` | Rift Workbench: a sidebar, a split layout of small tools, and settings for every feature. |
+| `RiftDemo` | Rift Workbench: a sidebar, tabs that each hold a split layout of small tools, and settings for every feature. |
 
 ## Usage
 
@@ -142,6 +151,30 @@ window, already removed, to open somewhere else.
 
 Hosting views ignore the window's safe area, so content runs under a headless titlebar; leave room for
 the window buttons yourself if a pane needs it.
+
+Tabs, each with its own layout:
+
+```swift
+@State var tabs = [RiftTab(id: 1, title: "Main")]
+@State var selection: Int? = 1
+@State var layouts: [Int: RiftLayout<String>] = [1: .pane("a")]
+
+VStack(spacing: 0) {
+    RiftTabBar(tabs: $tabs, selection: $selection) {
+        tabs.append(RiftTab(id: tabs.count + 1, title: "New"))
+    }
+    ZStack {
+        ForEach(tabs, id: \.id) { tab in
+            RiftLayoutView(layout: Binding(get: { layouts[tab.id] }, set: { layouts[tab.id] = $0 })) {
+                MyPane(id: $0)
+            }
+            .layoutHidden(tab.id != selection)
+        }
+    }
+}
+```
+
+Moves, renames and closes come back through `tabs`; closing the selected tab selects the next one.
 
 ### Making a custom handle draggable
 

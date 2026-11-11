@@ -790,4 +790,9 @@ enum RiftViewRegistry {
 	static func views<V: NSView>(of type: V.Type) -> [V] {
 		boxes.compactMap { $0.view as? V }
 	}
+
+	/// Every live view that takes pane drops outside a layout.
+	static func paneDropTargets() -> [any RiftPaneDropAccepting] {
+		boxes.compactMap { $0.view as? any RiftPaneDropAccepting }
+	}
 }

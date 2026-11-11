@@ -9,6 +9,8 @@ final class RiftPaneDragSession<PaneID: Hashable & Sendable> {
 	private let pane: PaneID
 	private let panel: NSPanel
 	private var current: (view: RiftView<PaneID>, target: RiftDropTarget<PaneID>)?
+	/// The tab bar (or other non-layout target) under the pointer that would take the pane.
+	private var dropAcceptor: (any RiftPaneDropAccepting)?
 
 	init?(source: RiftView<PaneID>, pane: PaneID, grabPoint: CGPoint) {
 		guard let frame = source.frame(of: pane), frame.width > 0, frame.height > 0 else {
@@ -73,15 +75,43 @@ final class RiftPaneDragSession<PaneID: Hashable & Sendable> {
 		panel.setFrameOrigin(origin)
 		if !panel.isVisible { panel.orderFront(nil) }
 
-		let resolved = resolve(screenPoint)
-		if let previous = current?.view, previous !== resolved.target?.view {
+		let acceptor = acceptor(at: screenPoint)
+		if let dropAcceptor, dropAcceptor !== acceptor { dropAcceptor.paneDragExited() }
+		dropAcceptor = acceptor
+		let target = acceptor == nil ? resolve(screenPoint).target : nil
+		if let previous = current?.view, previous !== target?.view {
 			previous.showDropIndicator(nil)
 		}
-		current = resolved.target
+		current = target
 		current?.view.showDropIndicator(current?.target.indicator)
 	}
 
+	/// The non-layout drop target (a tab bar) under the pointer that takes the pane, if any.
+	private func acceptor(at screenPoint: CGPoint) -> (any RiftPaneDropAccepting)? {
+		guard let source else { return nil }
+		let number = NSWindow.windowNumber(at: screenPoint, belowWindowWithWindowNumber: 0)
+		for view in RiftViewRegistry.paneDropTargets() {
+			guard let window = view.window, window.windowNumber == number,
+				view.paneDropGroup == source.groupIdentifier, !view.isHiddenOrHasHiddenAncestor
+			else { continue }
+			let point = view.convert(window.convertPoint(fromScreen: screenPoint), from: nil)
+			if view.bounds.contains(point) {
+				return view.paneDragMoved(to: point, pane: AnyHashable(pane)) ? view : nil
+			}
+		}
+		return nil
+	}
+
 	func drop(at screenPoint: CGPoint) {
+		if let acceptor = dropAcceptor ?? acceptor(at: screenPoint) {
+			dropAcceptor = nil
+			finish()
+			guard let source, source.paneLayout?.paneIDs.contains(pane) == true else { return }
+			if acceptor.acceptPaneDrop(AnyHashable(pane)) {
+				_ = source.detach(pane, reason: .transferOut)
+			}
+			return
+		}
 		let resolved = resolve(screenPoint)
 		finish()
 		guard let source else { return }
@@ -95,6 +125,8 @@ final class RiftPaneDragSession<PaneID: Hashable & Sendable> {
 	func cancel() { finish() }
 
 	private func finish() {
+		dropAcceptor?.paneDragExited()
+		dropAcceptor = nil
 		current?.view.showDropIndicator(nil)
 		current = nil
 		panel.orderOut(nil)

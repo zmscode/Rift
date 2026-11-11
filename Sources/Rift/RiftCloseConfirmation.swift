@@ -5,11 +5,15 @@ import SwiftUI
 public enum RiftCloseSubject: Sendable, Equatable {
 	case pane
 	case otherPanes
+	case tab
+	case otherTabs
 
 	var title: String {
 		switch self {
 		case .pane: "Did you mean to close this pane?"
 		case .otherPanes: "Did you mean to close the other panes?"
+		case .tab: "Did you mean to close this tab?"
+		case .otherTabs: "Did you mean to close the other tabs?"
 		}
 	}
 
@@ -17,6 +21,8 @@ public enum RiftCloseSubject: Sendable, Equatable {
 		switch self {
 		case .pane: "Close Pane"
 		case .otherPanes: "Close Other Panes"
+		case .tab: "Close Tab"
+		case .otherTabs: "Close Other Tabs"
 		}
 	}
 }

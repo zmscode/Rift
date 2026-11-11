@@ -47,7 +47,7 @@ private let riftCanvasGrey: CGFloat = 0.117647
 
 extension NSColor {
 	/// This colour with the canvas grey replaced by `canvas` (same alpha), or itself otherwise.
-	fileprivate func rift_replacingCanvas(with canvas: RiftRGBA) -> NSColor {
+	func rift_replacingCanvas(with canvas: RiftRGBA) -> NSColor {
 		guard let srgb = usingColorSpace(.sRGB) else { return self }
 		let grey = abs(srgb.redComponent - riftCanvasGrey) < 0.002
 			&& abs(srgb.greenComponent - riftCanvasGrey) < 0.002
@@ -57,7 +57,7 @@ extension NSColor {
 }
 
 extension RiftSurfaceStyle {
-	fileprivate func rift_themed(_ theme: RiftTheme) -> Self {
+	func rift_themed(_ theme: RiftTheme) -> Self {
 		var style = self
 		let canvas = theme[.canvas]
 		if let tint = style.glass?.tint { style.glass?.tint = tint.rift_replacingCanvas(with: canvas) }
