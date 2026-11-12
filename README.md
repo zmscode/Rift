@@ -114,11 +114,29 @@ A split-pane layout component for macOS. Use it from SwiftUI with `RiftLayoutVie
 
 ## Layout
 
-| Target     | Contents                                                                                                     |
-| ---------- | ------------------------------------------------------------------------------------------------------------ |
+| Target     | Contents                                                                                                   |
+| ---------- | ---------------------------------------------------------------------------------------------------------- |
 | `RiftCore` | Layout tree, geometry, divider-drag, drop-zone, sidebar, tab, floating and grid maths, themes. Pure Swift and unit-tested. |
-| `Rift`     | `RiftView` (AppKit), the pane drag session, and the SwiftUI wrapper `RiftLayoutView`. Re-exports `RiftCore`. |
-| `RiftDemo` | Rift Files: a Finder-style browser with places, tabs of split layouts, and settings for every feature. |
+| `Rift`     | The AppKit views and their SwiftUI wrappers. Re-exports `RiftCore`.                                        |
+| `RiftDemo` | Rift Files: a Finder-style browser with places, tabs of split layouts, and settings for every feature.     |
+
+Sources are grouped by feature:
+
+```text
+Sources/RiftCore/   Layout/  Motion/  Chrome/ (sidebar and tab maths)  Floating/  Grid/  Themes/
+Sources/Rift/
+  Layout/       RiftView, its configuration, pane container, header, top strip, focus border,
+                divider lines, drop indicator, pane drags, close confirmation, container animations
+  Floating/     floating layers
+  Sidebar/      RiftSidebarContainerView
+  Tabs/         tab bar, tab list, tab items and their surfaces
+  Grid/         RiftGridView
+  Window/       headless windows and the window movement lock
+  Appearance/   surfaces, themes and colours
+  SwiftUI/      RiftLayoutView, RiftSidebarSplitView, RiftTabBar, RiftTabList, RiftGrid, navigator and minimap
+  Support/      motion driver, icon button, shared helpers
+Sources/RiftDemo/   the app, its model, sidebar, and one file per pane in Panes/
+```
 
 ## Usage
 
