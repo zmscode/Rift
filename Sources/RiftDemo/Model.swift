@@ -208,6 +208,11 @@ final class Files {
 	private(set) var log: [String] = []
 	/// Names panes were given by renaming their header title.
 	var paneNames: [String: String] = [:]
+	/// How each browser pane shows its folder, and how big its icons are.
+	var viewModes: [String: BrowserViewMode] = [:]
+	var iconSizes: [String: BrowserIconSize] = [:]
+	/// The order the user dragged a folder's icons into (kept while the app runs).
+	var arrangements: [URL: [URL]] = [:]
 
 	func folder(of pane: String) -> URL {
 		_ = revision
@@ -267,4 +272,17 @@ final class Files {
 
 extension Int64 {
 	var byteText: String { ByteCountFormatter.string(fromByteCount: self, countStyle: .file) }
+}
+
+enum BrowserViewMode { case icons, list }
+
+enum BrowserIconSize: Int, CaseIterable {
+	case small, medium, large
+
+	var icon: CGFloat { [32, 48, 72][rawValue] }
+	/// The cell: the icon, two lines of name, and room around them.
+	var cell: CGSize {
+		[CGSize(width: 84, height: 80), CGSize(width: 100, height: 98), CGSize(width: 128, height: 124)][
+			rawValue]
+	}
 }
