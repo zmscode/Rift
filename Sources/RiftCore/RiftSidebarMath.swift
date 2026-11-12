@@ -82,10 +82,35 @@ public enum RiftSidebarMath {
 		return CGRect(x: x + dx, y: y, width: 28, height: 28)
 	}
 
-	/// The sidebar's title row: as tall as the toggle button plus the same space above and below
-	/// it (50pt, 38pt compact). Sidebar content starts below it.
+	/// The sidebar's title row (49pt, 38pt compact). Sidebar content starts below it.
 	public static func titleRowHeight(density: RiftChromeDensity) -> CGFloat {
-		density == .compact ? 38 : 50
+		density == .compact ? 38 : 49
+	}
+
+	/// The footer row along the bottom of the sidebar, shown when it has buttons. Sidebar content
+	/// ends above it.
+	public static let footerHeight: CGFloat = 40
+
+	/// Where the footer's buttons go (footer coordinates, y down): 26×26 circles, 4pt apart,
+	/// from the trailing edge inward, 11pt in (7pt compact, 6pt for a compact right sidebar).
+	/// They sit 1.5pt below the row's centre (centred in compact density). Buttons that would
+	/// start before the leading margin (10pt, 7pt compact) are left out.
+	public static func footerButtons(
+		count: Int, sidebarWidth: CGFloat, position: RiftSidebarPosition,
+		density: RiftChromeDensity
+	) -> [CGRect] {
+		let compact = density == .compact
+		let margin: CGFloat = compact ? 7 : 11
+		let nudge: CGFloat = compact && position == .right ? 1 : 0
+		let y = (footerHeight + (compact ? 0 : 3) - 26) / 2
+		let leading: CGFloat = compact ? 7 : 10
+		var frames: [CGRect] = []
+		for index in 0..<max(count, 0) {
+			let x = sidebarWidth - margin - 26 + nudge - CGFloat(index) * 30
+			guard x >= leading else { break }
+			frames.append(CGRect(x: x, y: y, width: 26, height: 26))
+		}
+		return frames
 	}
 
 	/// Where the sidebar's own buttons go in its title row (sidebar coordinates, y down): 28×28,

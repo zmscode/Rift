@@ -63,3 +63,59 @@ import Testing
 		#expect(RiftFloatingShadow.active == RiftFloatingShadow(opacity: 0.28, radius: 40, y: 20))
 	}
 }
+
+/// A container smaller than the panes' minimum sizes: nothing goes negative or leaves the bounds.
+@Suite struct SmallContainerTests {
+	private func grid() -> RiftLayout<String> {
+		var layout = RiftLayout<String>.pane("a")
+		layout = layout.splitting("a", with: "b", edge: .right) ?? layout
+		layout = layout.splitting("a", with: "c", edge: .bottom) ?? layout
+		layout = layout.splitting("b", with: "d", edge: .bottom) ?? layout
+		return layout
+	}
+
+	@Test func panesShrinkToNothingWithoutGoingNegative() {
+		for size in [CGSize(width: 40, height: 30), CGSize(width: 5, height: 5), .zero] {
+			let bounds = CGRect(origin: .zero, size: size)
+			let geometry = grid().geometry(in: bounds)
+			#expect(geometry.paneFrames.count == 4)
+			for frame in geometry.paneFrames.values {
+				#expect(frame.width >= 0 && frame.height >= 0)
+				#expect(frame.minX >= 0 && frame.minY >= 0)
+				#expect(frame.maxX <= size.width + 0.5 && frame.maxY <= size.height + 0.5)
+				#expect(frame.width.isFinite && frame.height.isFinite)
+			}
+		}
+	}
+
+	@Test func dividerDragsStayInRangeBelowTheMinimumSizes() {
+		// 200pt for two panes that each want 160: the limits scale down, and the divider can
+		// still only move between them.
+		let bounds = CGRect(x: 0, y: 0, width: 200, height: 100)
+		let layout = RiftLayout<String>.pane("a").splitting("a", with: "b", edge: .right)!
+		let geometry = layout.geometry(in: bounds)
+		let divider = geometry.dividers[0]
+		let hit = RiftDividerHit(dividers: [divider])
+		for x in [-500.0, 0, 100, 200, 900] {
+			var drag = RiftDividerDrag(hit: hit, pointer: CGPoint(x: 100, y: 50))
+			let result = drag.update(
+				pointer: CGPoint(x: x, y: 50), geometry: geometry, metrics: RiftMetrics())
+			for update in result.updates {
+				#expect(update.position >= 0 && update.position <= 1)
+				#expect(update.position.isFinite)
+			}
+		}
+	}
+
+	@Test func floatingLayersFollowATinyArea() {
+		let area = CGRect(x: 0, y: 0, width: 100, height: 60)
+		let new = RiftFloatingGeometry.newBounds(for: nil, in: area, existing: [])
+		#expect(area.contains(new))
+		let resized = RiftFloatingGeometry.resized(
+			new, edges: [.right, .bottom], by: CGSize(width: -500, height: -500), in: area)
+		#expect(resized.width >= 0 && resized.height >= 0 && area.contains(resized))
+		let frames = RiftFloatingGeometry.capsuleFrames(widths: [120, 120], in: area)
+		#expect(frames.count == 2)
+	}
+}
+

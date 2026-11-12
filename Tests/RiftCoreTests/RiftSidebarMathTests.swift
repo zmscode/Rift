@@ -122,4 +122,27 @@ import Testing
 		#expect(row.more == CGRect(x: 142, y: 11, width: 28, height: 28))
 		#expect(row.overflow == 3)
 	}
+
+	@Test func footerButtonsRunInwardFromTheTrailingEdge() {
+		let frames = RiftSidebarMath.footerButtons(
+			count: 2, sidebarWidth: 240, position: .left, density: .comfortable)
+		// 26pt circles: the first 11pt in from the edge, the next 4pt further in, 1.5pt low.
+		#expect(frames == [
+			CGRect(x: 203, y: 8.5, width: 26, height: 26),
+			CGRect(x: 173, y: 8.5, width: 26, height: 26),
+		])
+		let compact = RiftSidebarMath.footerButtons(
+			count: 1, sidebarWidth: 240, position: .left, density: .compact)
+		#expect(compact == [CGRect(x: 207, y: 7, width: 26, height: 26)])
+		let right = RiftSidebarMath.footerButtons(
+			count: 1, sidebarWidth: 240, position: .right, density: .compact)
+		#expect(right[0].minX == 208)
+		// Buttons that would cross the leading margin are left out.
+		#expect(
+			RiftSidebarMath.footerButtons(
+				count: 9, sidebarWidth: 100, position: .left, density: .comfortable
+			).count == 2)
+		#expect(RiftSidebarMath.titleRowHeight(density: .comfortable) == 49)
+		#expect(RiftSidebarMath.titleRowHeight(density: .compact) == 38)
+	}
 }

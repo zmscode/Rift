@@ -35,6 +35,8 @@ final class RiftPaneContainerView: RiftFlippedView {
 		didSet {
 			header.isHidden = !showsHeader
 			strip.isHidden = showsHeader
+			header.needsLayout = true
+			strip.needsLayout = true
 			layoutParts()
 		}
 	}
@@ -164,7 +166,9 @@ final class RiftPaneDragStripView: RiftFlippedView {
 	private let grip = NSImageView()
 	private var handleTrackingArea: NSTrackingArea?
 	private var stripTrackingArea: NSTrackingArea?
-	private var isHoveringHandle = false { didSet { updateGrip(animated: true) } }
+	private var isHoveringHandle = false {
+		didSet { if isHoveringHandle != oldValue { updateGrip(animated: true) } }
+	}
 
 	override init(frame frameRect: NSRect) {
 		super.init(frame: frameRect)
@@ -177,6 +181,7 @@ final class RiftPaneDragStripView: RiftFlippedView {
 		grip.layer?.cornerRadius = 5
 		grip.alphaValue = 0
 		addSubview(grip)
+		updateGripColor()
 		setAccessibilityElement(false)
 	}
 
@@ -198,6 +203,7 @@ final class RiftPaneDragStripView: RiftFlippedView {
 
 	override func layout() {
 		super.layout()
+		guard !isHidden else { return }
 		let size: CGFloat = 22
 		let handle = handleRect
 		grip.frame = CGRect(
@@ -216,11 +222,21 @@ final class RiftPaneDragStripView: RiftFlippedView {
 		needsLayout = true
 	}
 
+	private func updateGripColor() {
+		effectiveAppearance.performAsCurrentDrawingAppearance {
+			grip.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.08).cgColor
+		}
+	}
+
+	override func viewDidChangeEffectiveAppearance() {
+		super.viewDidChangeEffectiveAppearance()
+		updateGripColor()
+	}
+
 	private func updateGrip(animated: Bool) {
 		let alpha: CGFloat = isHoveringHandle && allowsPaneDrag ? 1 : 0
-		grip.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.08).cgColor
 		guard animated else {
-			grip.alphaValue = alpha
+			if grip.alphaValue != alpha { grip.alphaValue = alpha }
 			return
 		}
 		NSAnimationContext.runAnimationGroup { context in
@@ -233,10 +249,28 @@ final class RiftPaneDragStripView: RiftFlippedView {
 	override func hitTest(_ point: NSPoint) -> NSView? {
 		let local = convert(point, from: superview)
 		guard !isReplayingClick else { return nil }
-		return handlesPoint(local) ? self : nil
+		if handlesPoint(local) { return self }
+		// A click that opens the pane's menu lands anywhere along the strip, on every pane (the
+		// header region is the pane's own, wherever the pane sits in the window).
+		if menuProvider != nil, !isHiddenOrHasHiddenAncestor, bounds.contains(local),
+			let event = NSApp.currentEvent, Self.opensMenu(event)
+		{
+			return self
+		}
+		return nil
+	}
+
+	/// A right-click, or a Control-click.
+	private static func opensMenu(_ event: NSEvent) -> Bool {
+		event.type == .rightMouseDown
+			|| (event.type == .leftMouseDown && event.modifierFlags.contains(.control))
 	}
 
 	override func mouseDown(with event: NSEvent) {
+		if Self.opensMenu(event), let menu = menuProvider?() {
+			NSMenu.popUpContextMenu(menu, with: event, for: self)
+			return
+		}
 		let point = convert(event.locationInWindow, from: nil)
 		if handleRect.contains(point) {
 			onHandleMouseDown?(event)
@@ -256,12 +290,19 @@ final class RiftPaneDragStripView: RiftFlippedView {
 	/// Enter/exit tracking (unlike mouse-moved events) works even when the app isn't active, so
 	/// the window can be locked before the first click lands. Rebuilt whenever the layout changes.
 	private func rebuildTrackingAreas() {
+		let handle = handleRect
+		let strip = movesWindow ? bounds : .zero
+		// Nothing to do when both areas already cover the right rectangles (most resize frames
+		// only change the strip's width, and most strips only have the handle).
+		if (handleTrackingArea?.rect ?? .zero) == handle, (stripTrackingArea?.rect ?? .zero) == strip
+		{
+			return
+		}
 		for area in [handleTrackingArea, stripTrackingArea].compactMap({ $0 }) {
 			removeTrackingArea(area)
 		}
 		handleTrackingArea = nil
 		stripTrackingArea = nil
-		let handle = handleRect
 		if !handle.isEmpty {
 			let area = NSTrackingArea(
 				rect: handle, options: [.mouseEnteredAndExited, .activeAlways, .cursorUpdate],
@@ -381,6 +422,7 @@ final class RiftPaneHeaderView: RiftFlippedView, NSTextFieldDelegate {
 	var title: String {
 		get { titleField.stringValue }
 		set {
+			guard titleField.stringValue != newValue else { return }
 			titleField.stringValue = newValue
 			titleField.toolTip = newValue
 		}
@@ -512,6 +554,8 @@ final class RiftPaneHeaderView: RiftFlippedView, NSTextFieldDelegate {
 
 	override func layout() {
 		super.layout()
+		// A hidden header (the top strip is in use) is laid out when it is shown again.
+		guard !isHidden else { return }
 		let size: CGFloat = 16
 		let y = ((bounds.height - size) / 2).rounded()
 		var x = leadingInset + 6

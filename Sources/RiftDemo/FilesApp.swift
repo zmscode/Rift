@@ -227,6 +227,12 @@ struct FilesWindow: View {
 					actions.balance()
 				},
 			],
+			footerAccessories: [
+				RiftSidebarAccessory(symbolName: "plus", label: "New Tab") { actions.newTab() },
+				RiftSidebarAccessory(symbolName: "magnifyingglass", label: "Go to Pane…") {
+					actions.showNavigator()
+				},
+			],
 			toggleShortcut: "⌥⌘S",
 			theme: settings.theme
 		) {

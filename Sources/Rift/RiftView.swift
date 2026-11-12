@@ -236,7 +236,7 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 		let added = reconcileContainers()
 		placeContainers(animated: animated, added: added)
 		updateFocusAppearance()
-		rebuildAccessibility()
+		accessibilityNeedsRebuild()
 		window?.invalidateCursorRects(for: self)
 		needsDisplay = true
 	}
@@ -401,7 +401,7 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 
 	private func refreshTitles() {
 		for (id, container) in containers { container.header.title = title(for: id) }
-		rebuildAccessibility()
+		accessibilityNeedsRebuild()
 	}
 
 	/// Every pane's frame with the layout tiled, ignoring zoom.
@@ -667,8 +667,29 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 		super.setFrameSize(newSize)
 		layoutFloating()
 		placeContainers(animated: false, added: [])
-		rebuildAccessibility()
+		accessibilityNeedsRebuild()
 		window?.invalidateCursorRects(for: self)
+	}
+
+	private var accessibilityIsStale = false
+
+	/// The accessibility elements (divider elements, each pane's move actions) are rebuilt when
+	/// they are next asked for, or once the changes stop, rather than on every resize frame.
+	private func accessibilityNeedsRebuild() {
+		accessibilityIsStale = true
+		NSObject.cancelPreviousPerformRequests(
+			withTarget: self, selector: #selector(rebuildStaleAccessibility), object: nil)
+		perform(
+			#selector(rebuildStaleAccessibility), with: nil, afterDelay: 0.2,
+			inModes: [.common])
+	}
+
+	@objc private func rebuildStaleAccessibility() { refreshStaleAccessibility() }
+
+	private func refreshStaleAccessibility() {
+		guard accessibilityIsStale else { return }
+		accessibilityIsStale = false
+		rebuildAccessibility()
 	}
 
 	/// Redraws the divider lines at their target places, unless a layout motion is drawing them.
@@ -931,7 +952,7 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 		placeContainers(
 			animated: true, added: [], curve: configuration.animationStyle.chromeCurve,
 			visibility: target != nil ? .hiding : .revealing, elevate: target ?? previous)
-		rebuildAccessibility()
+		accessibilityNeedsRebuild()
 		window?.invalidateCursorRects(for: self)
 		needsDisplay = true
 		onZoomChange?(target)
@@ -1251,6 +1272,10 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 
 	open override func viewDidMoveToWindow() {
 		super.viewDidMoveToWindow()
+		if let monitor = cursorMonitor {
+			NSEvent.removeMonitor(monitor)
+			cursorMonitor = nil
+		}
 		if let monitor = mouseMonitor {
 			NSEvent.removeMonitor(monitor)
 			mouseMonitor = nil
@@ -1282,8 +1307,62 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 			MainActor.assumeIsolated { self?.focusPane(under: event) }
 			return event
 		}
+		// The resize cursor over a divider is set on every mouse move, and again on the next turn
+		// of the run loop, so it wins over pane content that sets its own cursor in between.
+		window?.acceptsMouseMovedEvents = true
+		cursorMonitor = NSEvent.addLocalMonitorForEvents(matching: .mouseMoved) {
+			[weak self] event in
+			MainActor.assumeIsolated { self?.updateDividerCursor(for: event) }
+			return event
+		}
 		placeContainers(animated: false, added: [])
 		updateTrackingArea()
+	}
+
+	private var cursorMonitor: Any?
+	private var showsDividerCursor = false
+
+	/// The divider under a window point, if this view is what the mouse would hit there (nothing
+	/// floating or overlaid above it).
+	private func hoveredDivider(at windowPoint: CGPoint) -> (hit: RiftDividerHit, point: CGPoint)? {
+		guard let window, !isHiddenOrHasHiddenAncestor, dividerDrag == nil else { return nil }
+		let point = convert(windowPoint, from: nil)
+		guard bounds.contains(point), let hit = dividerHit(at: point),
+			let content = window.contentView,
+			content.hitTest(content.superview?.convert(windowPoint, from: nil) ?? windowPoint)
+				=== self
+		else { return nil }
+		return (hit, point)
+	}
+
+	private func updateDividerCursor(for event: NSEvent) {
+		guard event.window === window, window != nil else { return }
+		guard let hovered = hoveredDivider(at: event.locationInWindow) else {
+			if showsDividerCursor {
+				// Off the divider: hand the cursor back to whatever is under the pointer.
+				showsDividerCursor = false
+				if dividerDrag == nil {
+					NSCursor.arrow.set()
+					window?.invalidateCursorRects(for: self)
+				}
+			}
+			return
+		}
+		showsDividerCursor = true
+		cursor(for: hovered.hit, at: hovered.point).set()
+		DispatchQueue.main.async { [weak self] in
+			guard let self, let window = self.window,
+				let hovered = self.hoveredDivider(at: window.mouseLocationOutsideOfEventStream)
+			else { return }
+			self.cursor(for: hovered.hit, at: hovered.point).set()
+		}
+	}
+
+	open override func cursorUpdate(with event: NSEvent) {
+		guard let hovered = hoveredDivider(at: event.locationInWindow) else {
+			return super.cursorUpdate(with: event)
+		}
+		cursor(for: hovered.hit, at: hovered.point).set()
 	}
 
 	// MARK: Container animations
@@ -1558,7 +1637,9 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 		// Used for focus-follows-mouse and for the window movement lock over pane headers.
 		let area = NSTrackingArea(
 			rect: .zero,
-			options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+			options: [
+				.mouseMoved, .mouseEnteredAndExited, .cursorUpdate, .activeAlways, .inVisibleRect,
+			],
 			owner: self, userInfo: nil)
 		addTrackingArea(area)
 		trackingArea = area
@@ -1883,6 +1964,7 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 	open override func viewDidEndLiveResize() {
 		super.viewDidEndLiveResize()
 		structuralActivity.remove(.windowLiveResize)
+		refreshStaleAccessibility()
 	}
 
 	/// A snapshot of a pane, used for the drag preview.
@@ -1983,6 +2065,7 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 	open override func accessibilityLabel() -> String? { "Split layout" }
 
 	open override func accessibilityChildren() -> [Any]? {
+		refreshStaleAccessibility()
 		let panes: [Any] = (paneLayout?.paneIDs ?? []).compactMap { id in
 			guard let container = containers[id], !container.isHidden else { return nil }
 			return container
@@ -1990,7 +2073,10 @@ open class RiftView<PaneID: Hashable & Sendable>: NSView, RiftDividerLinesHost {
 		return panes + Array(dividerElements.values)
 	}
 
-	open override func accessibilitySplitters() -> [Any]? { Array(dividerElements.values) }
+	open override func accessibilitySplitters() -> [Any]? {
+		refreshStaleAccessibility()
+		return Array(dividerElements.values)
+	}
 }
 
 /// A resolved drop location.

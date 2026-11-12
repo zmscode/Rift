@@ -44,6 +44,22 @@ open class RiftSidebarContainerView: NSView {
 		}
 	}
 	private var accessoryButtons: [RiftChromeIconButton] = []
+	/// Buttons in a footer row along the bottom of the sidebar (40pt tall, shown when this isn't
+	/// empty): 26pt round icon buttons from the trailing edge inward, the first one outermost.
+	/// The sidebar's content ends above the footer.
+	public var footerAccessories: [RiftSidebarAccessory] = [] {
+		didSet {
+			let old = oldValue.map { "\($0.symbolName)|\($0.label)" }
+			if old != footerAccessories.map({ "\($0.symbolName)|\($0.label)" }) {
+				rebuildFooterAccessories()
+			}
+		}
+	}
+	private var footerButtons: [RiftChromeIconButton] = []
+	/// The footer's height: 40pt with footer buttons, 0 without.
+	public var footerHeight: CGFloat {
+		footerAccessories.isEmpty ? 0 : RiftSidebarMath.footerHeight
+	}
 	private let moreButton = RiftChromeIconButton()
 	/// Height of the sidebar's title row (it drags the window); put sidebar content below it.
 	public var titleRowHeight: CGFloat { RiftSidebarMath.titleRowHeight(density: density) }
@@ -109,6 +125,8 @@ open class RiftSidebarContainerView: NSView {
 	{
 		didSet {
 			guard windowMinimumWidth != oldValue else { return }
+			// A SwiftUI host measures the minimum again (`RiftSidebarSplitView.sizeThatFits`).
+			invalidateIntrinsicContentSize()
 			onWindowMinimumWidthChange?(windowMinimumWidth)
 		}
 	}
@@ -340,7 +358,7 @@ open class RiftSidebarContainerView: NSView {
 
 	private func applyTheme() {
 		let foreground: NSColor = theme.map { NSColor.rift(.content, in: $0) } ?? .labelColor
-		for button in [toggleButton, moreButton] + accessoryButtons {
+		for button in [toggleButton, moreButton] + accessoryButtons + footerButtons {
 			button.foregroundColor = foreground
 		}
 		if let theme { dividerColor = NSColor.rift(.strokeSubtle, in: theme) }
@@ -388,6 +406,42 @@ open class RiftSidebarContainerView: NSView {
 			return button
 		}
 		relayout()
+	}
+
+	private func rebuildFooterAccessories() {
+		footerButtons.forEach { $0.removeFromSuperview() }
+		footerButtons = footerAccessories.enumerated().map { index, accessory in
+			let button = RiftChromeIconButton()
+			button.symbolName = accessory.symbolName
+			button.toolTip = accessory.label
+			button.setAccessibilityLabel(accessory.label)
+			button.tag = index
+			button.target = self
+			button.action = #selector(runFooterAccessory(_:))
+			if let theme { button.foregroundColor = NSColor.rift(.content, in: theme) }
+			sidebarPanel.addSubview(button)
+			return button
+		}
+		relayout()
+	}
+
+	@objc private func runFooterAccessory(_ sender: NSButton) {
+		guard footerAccessories.indices.contains(sender.tag) else { return }
+		footerAccessories[sender.tag].action()
+	}
+
+	private func layoutFooter(sidebarWidth w: CGFloat) {
+		let frames = RiftSidebarMath.footerButtons(
+			count: footerButtons.count, sidebarWidth: w, position: position, density: density)
+		let top = sidebarPanel.bounds.height - RiftSidebarMath.footerHeight
+		for (index, button) in footerButtons.enumerated() {
+			if index < frames.count {
+				button.isHidden = false
+				button.frame = frames[index].offsetBy(dx: 0, dy: top)
+			} else {
+				button.isHidden = true
+			}
+		}
 	}
 
 	@objc private func runAccessory(_ sender: NSButton) {
@@ -489,7 +543,8 @@ open class RiftSidebarContainerView: NSView {
 		// The sidebar keeps its width and place; the mask shows the part not yet covered.
 		let sidebarX = position == .left ? 0 : bounds.width - w
 		sidebarPanel.frame = CGRect(x: sidebarX, y: 0, width: w, height: bounds.height)
-		sidebarView.frame = sidebarPanel.bounds
+		sidebarView.frame = CGRect(
+			x: 0, y: 0, width: w, height: max(0, bounds.height - footerHeight))
 		themedBackground.frame = sidebarPanel.bounds
 		titleRow.frame = CGRect(x: 0, y: 0, width: w, height: titleRowHeight)
 		revealMask.frame =
@@ -522,6 +577,7 @@ open class RiftSidebarContainerView: NSView {
 			position: position, containerWidth: bounds.width, isFullScreen: isFullScreen,
 			density: density)
 		layoutAccessories(sidebarWidth: w)
+		layoutFooter(sidebarWidth: w)
 		toggleButton.symbolName = position == .left ? "sidebar.left" : "sidebar.right"
 		let label = isCollapsed ? "Show Sidebar" : "Hide Sidebar"
 		let tip = toggleShortcut.map { "\(label)  \($0)" } ?? label

@@ -69,10 +69,71 @@ public struct RiftPaneContext<PaneID: Hashable & Sendable> {
 	public let paneID: PaneID
 	public let isFocused: Bool
 	public let accessibilityLabel: String
-	/// How the pane is being presented: whether the layout has settled, zoom, sizes.
-	public let presentation: RiftPanePresentation
+	/// How the pane is being presented: whether the layout has settled, zoom, sizes. Each value is
+	/// observed on its own, so content is only rebuilt for the values it reads: a pane that reads
+	/// `isLayoutSettled` is not rebuilt on every frame of a resize, one that reads `contentSize` is.
+	public let presentation: RiftPanePresentationState
 	/// Whether the pointer is over the pane (and not over a floating layer above it).
 	public var isHovered: Bool = false
+}
+
+/// A pane's presentation for SwiftUI content: the values of `RiftPanePresentation`, each observed
+/// separately. One object lives as long as its pane, and its values change in place.
+@MainActor
+@Observable
+public final class RiftPanePresentationState {
+	/// `false` while the layout is moving.
+	public private(set) var isLayoutSettled = true
+	/// 0 tiled, 1 filling the layout, in between while the zoom animates.
+	public private(set) var zoomFraction: CGFloat = 0
+	/// The content's current size.
+	public private(set) var contentSize: CGSize = .zero
+	/// While the layout moves, the size the content will end at.
+	public private(set) var targetSize: CGSize?
+	/// The content's width when it differs from its pane's.
+	public private(set) var contentWidth: CGFloat?
+	/// How much of the content is cut off past the pane's trailing edge.
+	public private(set) var hiddenTrailingWidth: CGFloat = 0
+	/// The size of the pane's surface.
+	public private(set) var surfaceSize: CGSize?
+	/// Room to keep clear at the start and end of a title row along the pane's top edge.
+	public private(set) var titleLeadingInset: CGFloat = 0
+	public private(set) var titleTrailingInset: CGFloat = 0
+	/// The height of a title row that lines up with the window buttons (`nil` away from them).
+	public private(set) var titleRowHeight: CGFloat?
+
+	/// Every value at once (reading this observes all of them).
+	public var snapshot: RiftPanePresentation {
+		var value = RiftPanePresentation(
+			isLayoutSettled: isLayoutSettled, zoomFraction: zoomFraction, contentSize: contentSize,
+			targetSize: targetSize, contentWidth: contentWidth,
+			hiddenTrailingWidth: hiddenTrailingWidth, surfaceSize: surfaceSize)
+		value.titleLeadingInset = titleLeadingInset
+		value.titleTrailingInset = titleTrailingInset
+		value.titleRowHeight = titleRowHeight
+		return value
+	}
+
+	/// Takes new values, touching only the ones that changed (a write notifies observers even
+	/// when the value is the same).
+	func apply(_ value: RiftPanePresentation) {
+		if isLayoutSettled != value.isLayoutSettled { isLayoutSettled = value.isLayoutSettled }
+		if zoomFraction != value.zoomFraction { zoomFraction = value.zoomFraction }
+		if contentSize != value.contentSize { contentSize = value.contentSize }
+		if targetSize != value.targetSize { targetSize = value.targetSize }
+		if contentWidth != value.contentWidth { contentWidth = value.contentWidth }
+		if hiddenTrailingWidth != value.hiddenTrailingWidth {
+			hiddenTrailingWidth = value.hiddenTrailingWidth
+		}
+		if surfaceSize != value.surfaceSize { surfaceSize = value.surfaceSize }
+		if titleLeadingInset != value.titleLeadingInset {
+			titleLeadingInset = value.titleLeadingInset
+		}
+		if titleTrailingInset != value.titleTrailingInset {
+			titleTrailingInset = value.titleTrailingInset
+		}
+		if titleRowHeight != value.titleRowHeight { titleRowHeight = value.titleRowHeight }
+	}
 }
 
 /// An item in a pane's menu (see `RiftLayoutView`'s `paneMenu`).
@@ -155,6 +216,9 @@ final class RiftHostedPane<PaneID: Hashable & Sendable>: NSHostingView<AnyView>,
 	init(model: RiftPaneModel<PaneID>, root: AnyView) {
 		self.model = model
 		super.init(rootView: root)
+		// The layout sizes the pane; the content never sizes the hosting view. With the default
+		// options every resize re-measures the content's minimum, ideal and maximum sizes.
+		sizingOptions = []
 	}
 
 	@available(*, unavailable)
@@ -164,11 +228,9 @@ final class RiftHostedPane<PaneID: Hashable & Sendable>: NSHostingView<AnyView>,
 	required init?(coder: NSCoder) { fatalError() }
 
 	func riftPanePresentationDidChange(_ presentation: RiftPanePresentation) {
-		let old = model.context
-		model.context = RiftPaneContext(
-			paneID: old.paneID, isFocused: old.isFocused,
-			accessibilityLabel: old.accessibilityLabel,
-			presentation: presentation, isHovered: old.isHovered)
+		// The context keeps the same presentation object, so only content that reads a changed
+		// value is rebuilt.
+		model.context.presentation.apply(presentation)
 	}
 
 	func setHovered(_ hovered: Bool) {
@@ -287,9 +349,7 @@ public struct RiftLayoutView<PaneID: Hashable & Sendable, Content: View>: NSView
 			let model = RiftPaneModel(
 				RiftPaneContext(
 					paneID: id, isFocused: false, accessibilityLabel: label,
-					presentation: RiftPanePresentation(
-						isLayoutSettled: true, zoomFraction: 0, contentSize: .zero, targetSize: nil)
-				))
+					presentation: RiftPanePresentationState()))
 			let root = AnyView(RiftPaneRoot(model: model) { coordinator.parent.content($0) })
 			return RiftHostedPane(model: model, root: root)
 		}
@@ -360,6 +420,15 @@ public struct RiftLayoutView<PaneID: Hashable & Sendable, Content: View>: NSView
 		Self.syncFocus(in: view, coordinator: context.coordinator)
 	}
 
+	/// A layout fills the space it is offered. Without this, SwiftUI measures the whole view tree
+	/// through Auto Layout on every resize.
+	public func sizeThatFits(
+		_ proposal: ProposedViewSize, nsView: RiftView<PaneID>, context: Context
+	) -> CGSize? {
+		guard let width = proposal.width, let height = proposal.height else { return nil }
+		return CGSize(width: width, height: height)
+	}
+
 	/// Keeps every pane's `isFocused` and label current.
 	@MainActor
 	private static func syncFocus(in view: RiftView<PaneID>, coordinator: Coordinator) {
@@ -415,6 +484,7 @@ public struct RiftSidebarSplitView<Sidebar: View, Content: View>: NSViewRepresen
 	private let onPositionChange: ((RiftSidebarPosition) -> Void)?
 	private let onDensityChange: ((RiftChromeDensity) -> Void)?
 	private let accessories: [RiftSidebarAccessory]
+	private let footerAccessories: [RiftSidebarAccessory]
 	private let toggleShortcut: String?
 	private let theme: RiftThemeSelection?
 	private let sidebar: Sidebar
@@ -428,6 +498,8 @@ public struct RiftSidebarSplitView<Sidebar: View, Content: View>: NSViewRepresen
 	///   - animationStyle: the fold uses this style's chrome curve.
 	///   - accessories: the sidebar's own buttons, in its title row beside the toggle; the ones
 	///     that don't fit go into a "more" menu.
+	///   - footerAccessories: round icon buttons in a 40pt footer row along the sidebar's bottom,
+	///     from its trailing edge inward. The sidebar's content ends above the footer.
 	///   - onPositionChange, onDensityChange: the user picked a side or density from the toggle
 	///     button's right-click menu. Give either to show the menu.
 	public init(
@@ -443,6 +515,7 @@ public struct RiftSidebarSplitView<Sidebar: View, Content: View>: NSViewRepresen
 		onPositionChange: ((RiftSidebarPosition) -> Void)? = nil,
 		onDensityChange: ((RiftChromeDensity) -> Void)? = nil,
 		accessories: [RiftSidebarAccessory] = [],
+		footerAccessories: [RiftSidebarAccessory] = [],
 		toggleShortcut: String? = nil,
 		theme: RiftThemeSelection? = nil,
 		@ViewBuilder sidebar: () -> Sidebar,
@@ -460,6 +533,7 @@ public struct RiftSidebarSplitView<Sidebar: View, Content: View>: NSViewRepresen
 		self.onPositionChange = onPositionChange
 		self.onDensityChange = onDensityChange
 		self.accessories = accessories
+		self.footerAccessories = footerAccessories
 		self.toggleShortcut = toggleShortcut
 		self.theme = theme
 		self.sidebar = sidebar()
@@ -515,8 +589,20 @@ public struct RiftSidebarSplitView<Sidebar: View, Content: View>: NSViewRepresen
 				.ignoresSafeArea())
 	}
 
+	/// Fills the space it is offered (see `RiftLayoutView.sizeThatFits`), but is never narrower
+	/// than the window minimum: SwiftUI sets the window's minimum size from its content, so this
+	/// is what stops the window being dragged narrower than the sidebar allows.
+	public func sizeThatFits(
+		_ proposal: ProposedViewSize, nsView: RiftSidebarContainerView, context: Context
+	) -> CGSize? {
+		guard let width = proposal.width, let height = proposal.height else { return nil }
+		let minimum = nsView.managesWindowMinimumWidth ? nsView.windowMinimumWidth : 0
+		return CGSize(width: max(width, minimum), height: height)
+	}
+
 	private func apply(to view: RiftSidebarContainerView) {
 		view.accessories = accessories
+		view.footerAccessories = footerAccessories
 		if view.toggleShortcut != toggleShortcut { view.toggleShortcut = toggleShortcut }
 		if view.theme != theme { view.theme = theme }
 		if view.position != position { view.position = position }
